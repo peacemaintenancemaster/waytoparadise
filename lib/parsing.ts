@@ -13,13 +13,13 @@ const COL_ALIASES: Record<string, string> = {
   "거래일": "date", "거래일자": "date", "체결일": "date", "날짜": "date", "일자": "date",
   "종목명": "name", "종목": "name", "상품명": "name", "종목/상품명": "name",
   "종목코드": "ticker", "단축코드": "ticker", "티커": "ticker", "symbol": "ticker",
-  "거래구분": "txTypeRaw", "거래유형": "txTypeRaw", "구분": "txTypeRaw", "유형": "txTypeRaw",
+  "거래구분": "txTypeRaw", "거래유형": "txTypeRaw", "구분": "txTypeRaw", "유형": "txTypeRaw", "거래종류": "txTypeRaw",
   "수량": "qty", "거래수량": "qty", "체결수량": "qty",
   "단가": "price", "거래단가": "price", "체결단가": "price",
-  "거래금액": "amount", "결제금액": "amount", "거래대금": "amount", "금액": "amount",
-  "수수료": "fee", "세금": "tax",
+  "거래금액": "amount", "결제금액": "amount", "거래대금": "amount", "금액": "amount", "정산금액": "amount", "외화거래금액": "amount", "외화입출금액": "amount",
+  "수수료": "fee", "세금": "tax", "제세금": "tax", "제세금합": "tax",
   "환율": "fxRate", "적용환율": "fxRate",
-  "통화": "currency",
+  "통화": "currency", "통화코드": "currency",
   "원화금액": "amountKRW", "원화환산": "amountKRW",
   "원번호": "refId", "주문번호": "refId",
   "계좌": "account", "계좌명": "account", "계좌번호": "accountNo",
@@ -28,13 +28,15 @@ const COL_ALIASES: Record<string, string> = {
 const TX_TYPE_MAP: Record<string, string> = {
   "매수": TX_TYPE.BUY, "주식매수": TX_TYPE.BUY, "장내매수": TX_TYPE.BUY,
   "주식매수입고": TX_TYPE.BUY, "교체매매매수": TX_TYPE.BUY, "buy": TX_TYPE.BUY,
-  "매도": TX_TYPE.SELL, "주식매도": TX_TYPE.SELL, "장내매도": TX_TYPE.SELL, "sell": TX_TYPE.SELL,
   "주식매수출금": TX_TYPE.BUY,
+  "매도": TX_TYPE.SELL, "주식매도": TX_TYPE.SELL, "장내매도": TX_TYPE.SELL, "sell": TX_TYPE.SELL,
+  "주식매도입금": TX_TYPE.SELL, "주식매도출고": TX_TYPE.SELL,
   "입금": TX_TYPE.DEPOSIT, "현금입금": TX_TYPE.DEPOSIT, "예수금입금": TX_TYPE.DEPOSIT, "deposit": TX_TYPE.DEPOSIT,
+  "이체입금": TX_TYPE.DEPOSIT, "계좌대체입금": TX_TYPE.DEPOSIT,
   "출금": TX_TYPE.WITHDRAWAL, "현금출금": TX_TYPE.WITHDRAWAL, "withdrawal": TX_TYPE.WITHDRAWAL,
   "배당금": TX_TYPE.DIVIDEND, "배당": TX_TYPE.DIVIDEND, "dividend": TX_TYPE.DIVIDEND,
   "이자": TX_TYPE.INTEREST, "예탁금이용료": TX_TYPE.INTEREST,
-  "제세금": TX_TYPE.TAX, "배당세": TX_TYPE.TAX, "세금": TX_TYPE.TAX,
+  "제세금": TX_TYPE.TAX, "배당세": TX_TYPE.TAX, "세금": TX_TYPE.TAX, "배당세출금": TX_TYPE.TAX,
   "수수료": TX_TYPE.FEE, "보관수수료": TX_TYPE.FEE, "adr수수료": TX_TYPE.FEE,
   "합병": TX_TYPE.MERGER_SPLIT, "액면병합": TX_TYPE.MERGER_SPLIT, "분할": TX_TYPE.MERGER_SPLIT,
   "채권만기상환출고": TX_TYPE.SELL, "상환금입금": TX_TYPE.DEPOSIT,
@@ -46,7 +48,7 @@ function normalizeHeader(h: string): string {
 
 function parseNumber(v: unknown): number {
   if (v == null || v === "") return 0;
-  return parseFloat(String(v).replace(/[,\s]/g, "")) || 0;
+  return parseFloat(String(v).replace(/[₩$,\s"]/g, "")) || 0;
 }
 
 function parseDate(v: unknown): string | null {
@@ -61,7 +63,7 @@ function mapColumns(headers: string[]): Record<string, number> {
   headers.forEach((h, i) => {
     const n = normalizeHeader(h);
     if (COL_ALIASES[n]) {
-      map[COL_ALIASES[n]] = i;
+      if (map[COL_ALIASES[n]] === undefined) map[COL_ALIASES[n]] = i;
       return;
     }
     for (const [alias, field] of Object.entries(COL_ALIASES)) {
@@ -76,8 +78,10 @@ function mapColumns(headers: string[]): Record<string, number> {
 function mapTxType(raw: string): string {
   if (!raw) return TX_TYPE.DEPOSIT;
   const n = raw.trim().toLowerCase().replace(/\s+/g, "");
-  for (const [k, v] of Object.entries(TX_TYPE_MAP)) {
-    if (n.includes(k.toLowerCase())) return v;
+  // 긴 단어부터 매칭되도록 길이 역순 정렬 (오분류 방지)
+  const sortedKeys = Object.keys(TX_TYPE_MAP).sort((a, b) => b.length - a.length);
+  for (const k of sortedKeys) {
+    if (n.includes(k.toLowerCase())) return TX_TYPE_MAP[k];
   }
   return TX_TYPE.DEPOSIT;
 }
@@ -118,15 +122,19 @@ function rowsToTransactions(
     const currency = (get("currency") || "KRW").toString().trim().toUpperCase();
     const refId = (get("refId") || "").toString().trim();
     const accountFromRow = (get("account") || "").toString().trim();
+    
     if (!date && !name && !txTypeRaw) return;
+    
     const txType = mapTxType(txTypeRaw);
     const finalAmount = amount || qty * price;
     const amountKRW = currency === "USD" ? (parseNumber(get("amountKRW")) || finalAmount * fxRate) : finalAmount;
+    
     const tx = {
       date, name, ticker: ticker || null, txType, txTypeRaw, qty, price,
       amount: finalAmount, amountKRW, fee, tax, fxRate, currency, refId,
       account: accountFromRow || accountLabel || "기본계좌",
     };
+    
     if (name && !ticker && [TX_TYPE.BUY, TX_TYPE.SELL, TX_TYPE.DIVIDEND].includes(txType)) {
       if (!unmapped.find((u) => u.name === name)) unmapped.push({ name, ticker: "" });
     }
@@ -174,7 +182,7 @@ export function processRawData(
   tickerMapCache: Record<string, string>,
   accountLabel: string
 ): { txs: Transaction[]; unmapped: UnmappedName[] } {
-  let bestIdx = 0;
+  let bestIdx = -1;
   let maxMatches = 0;
   let colMap: Record<string, number> = {};
 
@@ -195,7 +203,7 @@ export function processRawData(
 
   const unmapped: UnmappedName[] = [];
   
-  if (maxMatches === 0) {
+  if (bestIdx === -1 || maxMatches === 0) {
     return { txs: [], unmapped };
   }
 
@@ -218,36 +226,100 @@ export function processRawData(
   return { txs: txs as Transaction[], unmapped };
 }
 
-export function parseTSV(text: string): { rows: string[][] } | null {
-  const lines = text.trim().split(/\r?\n/);
-  if (lines.length < 1) return null;
-  const firstLine = lines[0];
-  const sep = firstLine.includes("\t") ? "\t" : firstLine.includes(",") ? "," : null;
-  if (!sep) return null;
-  return {
-    rows: lines.map((l) => l.split(sep)),
-  };
+// 따옴표로 감싸진 쉼표(,) 등을 안전하게 처리하는 완벽한 CSV/TSV 파서
+export function parseCSVText(text: string, sep: string = ","): string[][] {
+  const result: string[][] = [];
+  let row: string[] = [];
+  let current = "";
+  let inQuotes = false;
+  
+  if (!text) return result;
+  // 탭이 명확히 존재한다면 구분자를 탭으로 자동 인식
+  if (!text.includes(sep) && sep === "," && text.includes("\t")) {
+    sep = "\t";
+  }
+
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (i + 1 < text.length && text[i + 1] === '"') {
+          current += '"';
+          i++; // 이스케이프된 따옴표 처리
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        current += c;
+      }
+    } else {
+      if (c === '"') {
+        inQuotes = true;
+      } else if (c === sep) {
+        row.push(current);
+        current = "";
+      } else if (c === '\r' && i + 1 < text.length && text[i + 1] === '\n') {
+        row.push(current);
+        result.push(row);
+        row = [];
+        current = "";
+        i++; // \n 건너뛰기
+      } else if (c === '\n' || c === '\r') {
+        row.push(current);
+        result.push(row);
+        row = [];
+        current = "";
+      } else {
+        current += c;
+      }
+    }
+  }
+  if (current || text[text.length - 1] === sep) {
+    row.push(current);
+  }
+  if (row.length > 0) {
+    result.push(row);
+  }
+  return result;
 }
 
-export function parseExcelFile(
-  file: File
-): Promise<{ rows: unknown[][] }> {
+// 인코딩(EUC-KR) 자동 감지를 지원하는 파일 파서
+export function parseFile(file: File): Promise<{ rows: unknown[][] }> {
   return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const wb = XLSX.read(e.target?.result, { type: "array" });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" }) as unknown[][];
-        if (data.length < 1) {
-          reject("Empty sheet");
-          return;
+    const isExcel = !!file.name.match(/\.(xlsx|xls)$/i);
+    if (isExcel) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const wb = XLSX.read(e.target?.result, { type: "array" });
+          const ws = wb.Sheets[wb.SheetNames[0]];
+          const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" }) as unknown[][];
+          if (data.length < 1) return reject("Empty sheet");
+          resolve({ rows: data });
+        } catch (err) {
+          reject(err);
         }
-        resolve({ rows: data });
-      } catch (err) {
-        reject(err);
-      }
-    };
-    reader.readAsArrayBuffer(file);
+      };
+      reader.readAsArrayBuffer(file);
+    } else {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const buffer = e.target?.result as ArrayBuffer;
+          // UTF-8로 우선 디코딩 시도
+          let text = new TextDecoder("utf-8").decode(buffer);
+          // 한글 깨짐 징후( 대체문자) 발견 시 국내 증권사 포맷인 EUC-KR로 다시 디코딩
+          if (text.includes("")) {
+            text = new TextDecoder("euc-kr").decode(buffer);
+          }
+          const sep = file.name.toLowerCase().endsWith(".tsv") ? "\t" : ",";
+          const rows = parseCSVText(text, sep);
+          resolve({ rows });
+        } catch (err) {
+          reject(err);
+        }
+      };
+      reader.readAsArrayBuffer(file); // Text 대신 ArrayBuffer로 읽어 인코딩 통제
+    }
   });
 }

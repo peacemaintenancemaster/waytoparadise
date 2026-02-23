@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { HorizBarChart, LineChart, DonutChart } from "./charts";
 import { dbGetAll, dbPutAll, dbDelete, dbClear } from "@/lib/db";
-import { processRawData, parseTSV, parseExcelFile } from "@/lib/parsing";
+import { processRawData, parseFile, parseCSVText } from "@/lib/parsing";
 import { buildHoldings, calcZScore, weatherFromZScore, simulateRetirement, displayName, pnlColor, fmt, fmtPct, fmtWon } from "@/lib/accounting";
 import {
   TABS, TICKER_PAGE_SIZE, PORTFOLIO_CATEGORIES,
@@ -269,12 +269,13 @@ export default function DashboardApp() {
   const handlePaste = useCallback(() => {
     const text = pasteText.trim();
     if (!text) return;
-    const parsed = parseTSV(text);
-    if (parsed) { 
-      processData(parsed.rows, pendingAccount || "붙여넣기"); 
+    const rows = parseCSVText(text, "\t");
+    if (rows && rows.length > 0) { 
+      processData(rows, pendingAccount || "붙여넣기"); 
       setPasteText(""); 
+    } else {
+      setPasteMsg("파싱 실패: 데이터를 인식할 수 없습니다.");
     }
-    else setPasteMsg("파싱 실패: 데이터를 인식할 수 없습니다.");
   }, [pasteText, pendingAccount, processData]);
 
   const handleFileDrop = useCallback(async (e: React.DragEvent | React.ChangeEvent<HTMLInputElement>) => {
@@ -288,17 +289,11 @@ export default function DashboardApp() {
 
     const acct = pendingAccount || file.name.replace(/\.[^.]+$/, "");
     try {
-      if (file.name.match(/\.(xlsx|xls)$/i)) {
-        const d = await parseExcelFile(file);
-        processData(d.rows, acct);
-      } else {
-        const text = await file.text();
-        const p = parseTSV(text);
-        if (p) processData(p.rows, acct);
-        else setPasteMsg("파일 파싱 실패");
-      }
+      const d = await parseFile(file);
+      processData(d.rows, acct);
     } catch (err) {
-      setPasteMsg(`파일 오류: ${err}`);
+      setPasteMsg(`파일 파싱 실패: ${err}`);
+      setTimeout(() => setPasteMsg(""), 4000);
     }
   }, [pendingAccount, processData]);
 
