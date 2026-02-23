@@ -26,7 +26,6 @@ const COL_ALIASES: Record<string, string[]> = {
   "account": ["계좌명", "계좌번호", "계좌"],
 };
 
-// AI가 사전 학습한 글로벌/해외주식 예비 티커 사전 (CSV에 없는 종목 자동 매핑)
 const GLOBAL_FALLBACK_MAP: Record<string, string> = {
   "은현물아이셰어즈ETF": "SLV",
   "기가클라우드테크놀로지": "GCT",
@@ -143,19 +142,6 @@ function mapTxType(raw: string): string {
 export function detectAssetClass(tx: any): AssetClassType {
   const name = String(tx.name || "").toUpperCase();
   const ticker = String(tx.ticker || "").toUpperCase();
-  const txTypeRaw = String(tx.txTypeRaw || "").toUpperCase();
-  
-  if (
-    name.includes("채권") || 
-    name.includes("BOND") || 
-    name.includes("캐피탈") || 
-    name.includes("전단채") || 
-    name.includes("국고채") || 
-    name.includes("회사채") ||
-    txTypeRaw.includes("채권")
-  ) {
-    return ASSET_CLASS.KR_BOND;
-  }
   
   if (name.includes("금현물") || name.includes("금 현물")) return ASSET_CLASS.GOLD;
   if (tx.currency === "USD") {
@@ -189,9 +175,15 @@ function rowsToTransactions(
     const fxRate = parseNumber(get("fxRate")) || 1;
     const currency = String(get("currency") || "KRW").trim().toUpperCase();
     const refId = String(get("refId") || "").trim();
-    const accountFromRow = String(get("account") || "").trim();
     
     if (!date && !name && !txTypeRaw) return;
+    
+    // 채권 관련 거래는 무조건 필터링 (건너뜀)
+    const isBond = 
+      name.includes("채권") || name.includes("BOND") || name.includes("캐피탈") || 
+      name.includes("전단채") || name.includes("국고채") || name.includes("회사채") ||
+      txTypeRaw.includes("채권");
+    if (isBond) return;
     
     const txType = mapTxType(txTypeRaw);
     if (txType === "IGNORE") return; 
@@ -202,16 +194,12 @@ function rowsToTransactions(
     const tx: Partial<Transaction> = {
       date, name, ticker: ticker || null, txType: txType as any, txTypeRaw, qty, price,
       amount: finalAmount, amountKRW, fee, tax, fxRate, currency, refId,
-      account: accountFromRow || accountLabel || "기본계좌",
+      // 중요: CSV의 상대방 은행(계좌)을 무시하고 파일명(accountLabel)을 최우선으로 적용
+      account: accountLabel || "기본계좌", 
     };
     
-    const isSpecialAsset = 
-      name.includes("채권") || name.includes("BOND") || name.includes("캐피탈") || 
-      name.includes("전단채") || name.includes("국고채") || name.includes("회사채") ||
-      name.includes("금현물") || name.includes("금 현물") ||
-      txTypeRaw.includes("채권") || txTypeRaw.includes("금현물");
+    const isSpecialAsset = name.includes("금현물") || name.includes("금 현물") || txTypeRaw.includes("금현물");
 
-    // 타입 단언(as string[])을 사용하여 타입 에러 해결
     if (name && !ticker && !isSpecialAsset && ([TX_TYPE.BUY, TX_TYPE.SELL, TX_TYPE.DIVIDEND] as string[]).includes(txType as string)) {
       if (!tickerMapCache[name] && !GLOBAL_FALLBACK_MAP[name]) {
         if (!unmapped.find((u) => u.name === name)) unmapped.push({ name, ticker: "" });
@@ -243,7 +231,6 @@ function deduplicateTransactions(txs: Partial<Transaction>[]): Partial<Transacti
       }
     }
     if (twin) {
-      // 타입 단언(as string[])을 사용하여 타입 에러 해결
       const master = ([TX_TYPE.BUY, TX_TYPE.SELL] as string[]).includes(tx.txType as string) ? tx : twin;
       const slave = master === tx ? twin : tx;
       merged.push({ ...master, fee: (master.fee || 0) + (slave.fee || 0), tax: (master.tax || 0) + (slave.tax || 0) });

@@ -162,8 +162,10 @@ export default function DashboardApp() {
   const [loadingDB, setLoadingDB] = useState(true);
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
   const [tickerSearch, setTickerSearch] = useState("");
+  const [txSearch, setTxSearch] = useState(""); // 추가된 거래내역 검색 상태
   const [tickerPage, setTickerPage] = useState(0);
   const [checkedTxIds, setCheckedTxIds] = useState<Set<number>>(new Set());
+  const [checkedHoldings, setCheckedHoldings] = useState<Set<string>>(new Set()); // 추가된 자산 일괄삭제 선택 상태
   const [txAccountFilter, setTxAccountFilter] = useState("전체");
   const [selectedMacroIds, setSelectedMacroIds] = useState<Set<string>>(new Set(DEFAULT_SELECTED_MACRO));
   const [macroRegionFilter, setMacroRegionFilter] = useState("전체");
@@ -282,7 +284,6 @@ export default function DashboardApp() {
     try {
       const d = await parseFile(file);
       
-      // 1. 한국주식 마스터 사전 CSV 업로드 자동 감지
       const headerRow = d.rows.slice(0, 5).find(r => r && Array.isArray(r) && r.some(h => String(h).includes("표준코드")));
       if (headerRow) {
         const headerStrings = headerRow.map(String);
@@ -298,7 +299,6 @@ export default function DashboardApp() {
             if (!Array.isArray(row) || row === headerRow) continue;
             let code = String(row[codeIdx] || "").trim();
             
-            // 숫자로만 된 6자리 미만 코드는 앞에 0을 채워서 규격 통일
             if (code && /^\d+$/.test(code) && code.length < 6) {
               code = code.padStart(6, "0");
             }
@@ -319,12 +319,11 @@ export default function DashboardApp() {
             
             setPasteMsg(`✅ 한국주식 마스터 사전 등록 완료! (${count}개 종목 매핑)`);
             setTimeout(() => setPasteMsg(""), 4000);
-            return; // 마스터 파일은 일반 거래내역으로 파싱하지 않고 여기서 종료
+            return; 
           }
         }
       }
 
-      // 2. 일반 증권사 거래내역 CSV 파싱 진행
       processData(d.rows, acct);
     } catch (err) {
       setPasteMsg(`파일 파싱 실패: ${err}`);
@@ -344,11 +343,34 @@ export default function DashboardApp() {
     setUnmappedNames((prev) => prev.filter((u) => u.name !== name));
   }, [tickerMap]);
 
+  // 자산(종목) 일괄 삭제 로직
+  const toggleCheckedHolding = (key: string) => setCheckedHoldings((prev) => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
+  const toggleAllHoldings = () => checkedHoldings.size === activeHoldings.length ? setCheckedHoldings(new Set()) : setCheckedHoldings(new Set(activeHoldings.map(h => h.ticker)));
+  const deleteCheckedHoldings = async () => {
+    if (!checkedHoldings.size || !confirm(`선택한 ${checkedHoldings.size}개 종목의 모든 거래내역을 삭제하시겠습니까?`)) return;
+    setTransactions((prev) => {
+      const next = prev.filter((t) => !checkedHoldings.has(t.ticker || t.name));
+      dbClear("transactions").then(() => dbPutAll("transactions", next)).catch(console.error);
+      return next;
+    });
+    setCheckedHoldings(new Set());
+  };
+
+  // 거래내역 일괄 삭제 로직
   const toggleCheckedTx = (id: number) => setCheckedTxIds((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const filteredTxs = useMemo(() => {
-    const base = txAccountFilter === "전체" ? transactions : transactions.filter((t) => t.account === txAccountFilter);
+    let base = txAccountFilter === "전체" ? transactions : transactions.filter((t) => t.account === txAccountFilter);
+    if (txSearch) {
+      const q = txSearch.toLowerCase();
+      base = base.filter((t) => 
+        (t.name && t.name.toLowerCase().includes(q)) || 
+        (t.ticker && t.ticker.toLowerCase().includes(q)) ||
+        (t.txType && t.txType.toLowerCase().includes(q)) ||
+        (t.txTypeRaw && t.txTypeRaw.toLowerCase().includes(q))
+      );
+    }
     return [...base].reverse();
-  }, [transactions, txAccountFilter]);
+  }, [transactions, txAccountFilter, txSearch]);
   const toggleAllTx = () => checkedTxIds.size === filteredTxs.length ? setCheckedTxIds(new Set()) : setCheckedTxIds(new Set(filteredTxs.map((t) => t.id)));
   const deleteCheckedTx = async () => {
     if (!checkedTxIds.size || !confirm(`선택한 ${checkedTxIds.size}건을 삭제하시겠습니까?`)) return;
@@ -518,14 +540,28 @@ export default function DashboardApp() {
             </div>
             <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-5">
               <div className="bg-gradient-to-br from-card via-card to-muted/30 rounded-2xl p-5 border border-border/50 shadow-lg min-w-0 animate-scale-in">
-                <div className="text-[10px] text-muted-foreground mb-4 tracking-wider uppercase font-semibold flex items-center gap-2">
-                  <span className="w-1 h-4 bg-primary rounded-full"></span>
-                  보유 종목
+                <div className="flex items-center justify-between mb-4">
+                  <div className="text-[10px] text-muted-foreground tracking-wider uppercase font-semibold flex items-center gap-2">
+                    <span className="w-1 h-4 bg-primary rounded-full"></span>
+                    보유 종목
+                  </div>
+                  {checkedHoldings.size > 0 && (
+                    <button
+                      className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[11px] border border-[#3a1a1a] text-negative bg-card hover:bg-[#2d0f0f] transition-colors"
+                      onClick={deleteCheckedHoldings}
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      선택 삭제 ({checkedHoldings.size})
+                    </button>
+                  )}
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full border-collapse text-xs">
                     <thead>
                       <tr className="text-muted-foreground text-[10px]">
+                        <th className="px-3 py-2.5 text-center w-8">
+                          <input type="checkbox" className="w-3.5 h-3.5 cursor-pointer" checked={checkedHoldings.size === activeHoldings.length && activeHoldings.length > 0} onChange={toggleAllHoldings} />
+                        </th>
                         {["종목", "수량", "평균단가", "평가금액", "손익", "수익률"].map((h) => (
                           <th key={h} className="px-3 py-2.5 text-right font-semibold whitespace-nowrap">{h}</th>
                         ))}
@@ -546,6 +582,9 @@ export default function DashboardApp() {
                               style={{ animationDelay: `${idx * 30}ms` }}
                               onClick={() => { setSelectedTicker(h.ticker); setActiveTab(2); setTickerSearch(""); setTickerPage(0); }}
                             >
+                              <td className="px-3 py-3 text-center" onClick={(e) => e.stopPropagation()}>
+                                <input type="checkbox" className="w-3.5 h-3.5 cursor-pointer" checked={checkedHoldings.has(h.ticker)} onChange={() => toggleCheckedHolding(h.ticker)} />
+                              </td>
                               <td className="px-3 py-3">
                                 <div className="font-semibold text-card-foreground text-xs">{displayName(h)}</div>
                                 <div className="text-[10px] text-muted-foreground mt-0.5">{/^\d{5,6}$/.test(h.ticker) ? h.ticker : h.name}</div>
@@ -639,7 +678,7 @@ export default function DashboardApp() {
         {activeTab === 1 && (
           <div className="flex flex-col gap-3">
             <div className="flex items-center gap-2.5 flex-wrap">
-              <div className="flex gap-1.5 flex-wrap flex-1">
+              <div className="flex gap-1.5 flex-wrap flex-1 items-center">
                 {allAccounts.map((a) => (
                   <button
                     key={a}
@@ -653,6 +692,15 @@ export default function DashboardApp() {
                     {a}
                   </button>
                 ))}
+                <div className="relative ml-1">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                  <input
+                    value={txSearch}
+                    onChange={(e) => setTxSearch(e.target.value)}
+                    placeholder="거래 검색..."
+                    className="w-[150px] bg-card border border-input rounded-lg pl-8 pr-3 py-1.5 text-card-foreground text-[11px] focus:border-primary/50 transition-colors"
+                  />
+                </div>
               </div>
               <div className="text-xs text-muted-foreground tabular-nums">{filteredTxs.length}건</div>
               {checkedTxIds.size > 0 && (
