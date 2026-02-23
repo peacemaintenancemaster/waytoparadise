@@ -161,9 +161,14 @@ export default function DashboardApp() {
   const [pendingAccount, setPendingAccount] = useState("");
   const [loadingDB, setLoadingDB] = useState(true);
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
+  
+  const [dashSort, setDashSort] = useState({ key: 'marketValue', desc: true });
   const [tickerSearch, setTickerSearch] = useState("");
+  const [analysisFilter, setAnalysisFilter] = useState("ALL");
+  const [analysisSort, setAnalysisSort] = useState({ key: 'name', desc: false });
   const [txSearch, setTxSearch] = useState(""); 
   const [tickerPage, setTickerPage] = useState(0);
+  
   const [checkedTxIds, setCheckedTxIds] = useState<Set<number>>(new Set());
   const [checkedHoldings, setCheckedHoldings] = useState<Set<string>>(new Set()); 
   const [txAccountFilter, setTxAccountFilter] = useState("전체");
@@ -209,7 +214,7 @@ export default function DashboardApp() {
   const closedHoldings = useMemo(() => Object.values(holdings).filter((h) => h.qty === 0 && h.realizedPnL !== 0), [holdings]);
   const allAccounts = useMemo(() => ["전체", ...new Set(transactions.map((t) => t.account).filter(Boolean))], [transactions]);
 
-  // 실시간 시세 자동 연동 로직
+  // 자동 시세 연동
   useEffect(() => {
     const fetchPrices = async () => {
       const toFetch = activeHoldings.filter(h => h.ticker && !fetchedRef.current.has(h.ticker));
@@ -218,6 +223,11 @@ export default function DashboardApp() {
       toFetch.forEach(h => fetchedRef.current.add(h.ticker as string));
       const fetchedPrices: Record<string, number> = {};
       let hasChanges = false;
+
+      const proxies = [
+        (url: string) => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
+        (url: string) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`
+      ];
 
       await Promise.all(toFetch.map(async (h) => {
         let tickersToTry = [h.ticker as string];
@@ -228,25 +238,27 @@ export default function DashboardApp() {
         }
 
         for (const t of tickersToTry) {
-          try {
-            const url = `https://query1.finance.yahoo.com/v8/finance/chart/${t}`;
-            const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
-            const res = await fetch(proxyUrl);
-            if (!res.ok) continue;
-            
-            const data = await res.json();
-            if (data.contents) {
-              const parsed = JSON.parse(data.contents);
-              const price = parsed.chart?.result?.[0]?.meta?.regularMarketPrice;
+          const url = `https://query1.finance.yahoo.com/v8/finance/chart/${t}`;
+          let success = false;
+          for (const p of proxies) {
+            try {
+              const res = await fetch(p(url));
+              if (!res.ok) continue;
+              const data = await res.json();
+              let parsed = data;
+              if (data.contents) {
+                try { parsed = JSON.parse(data.contents); } catch(e) {}
+              }
+              const price = parsed?.chart?.result?.[0]?.meta?.regularMarketPrice;
               if (price) {
                 fetchedPrices[h.ticker as string] = price;
+                success = true;
                 hasChanges = true;
                 break;
               }
-            }
-          } catch (e) {
-            console.error("Price fetch error for", t, e);
+            } catch (e) {}
           }
+          if (success) break;
         }
       }));
 
@@ -266,6 +278,32 @@ export default function DashboardApp() {
   const totalMarketValue = useMemo(() => activeHoldings.reduce((s, h) => s + (currentPrices[h.ticker] || h.avgCost) * h.qty, 0), [activeHoldings, currentPrices]);
   const totalUnrealizedPnL = totalMarketValue - totalCost;
   const totalRealizedPnL = useMemo(() => Object.values(holdings).reduce((s, h) => s + h.realizedPnL, 0), [holdings]);
+
+  const sortedActiveHoldings = useMemo(() => {
+    return [...activeHoldings].sort((a, b) => {
+      const priceA = currentPrices[a.ticker] || a.avgCost;
+      const priceB = currentPrices[b.ticker] || b.avgCost;
+      const mvA = a.qty * priceA;
+      const mvB = b.qty * priceB;
+      const pnlA = mvA - a.totalCost;
+      const pnlB = mvB - b.totalCost;
+      const pnlPctA = a.totalCost > 0 ? pnlA / a.totalCost : 0;
+      const pnlPctB = b.totalCost > 0 ? pnlB / b.totalCost : 0;
+
+      let valA, valB;
+      if (dashSort.key === 'totalCost') { valA = a.totalCost; valB = b.totalCost; }
+      else if (dashSort.key === 'realizedPnL') { valA = a.realizedPnL; valB = b.realizedPnL; }
+      else if (dashSort.key === 'pnlPct') { valA = pnlPctA; valB = pnlPctB; }
+      else if (dashSort.key === 'pnl') { valA = pnlA; valB = pnlB; }
+      else { valA = mvA; valB = mvB; } // marketValue fallback
+      
+      return dashSort.desc ? valB - valA : valA - valB;
+    });
+  }, [activeHoldings, currentPrices, dashSort]);
+
+  const handleDashSort = (key: string) => {
+    setDashSort(p => ({ key, desc: p.key === key ? !p.desc : true }));
+  };
 
   const activeIndicators = useMemo(() => ALL_MACRO_INDICATORS.filter((m) => selectedMacroIds.has(m.indicator)), [selectedMacroIds]);
   const macroRegions = useMemo(() => ["전체", ...new Set(ALL_MACRO_INDICATORS.map((m) => m.region))], []);
@@ -296,99 +334,128 @@ export default function DashboardApp() {
 
   const activePortfolioStats = useMemo(() => allPortfolioStats.find((p) => p.id === activePortfolioId) || null, [allPortfolioStats, activePortfolioId]);
 
-  const processData = useCallback((rawRows: any[][], acct: string) => {
-    const { txs, unmapped } = processRawData(rawRows, tickerMap, acct);
-    
-    if (txs.length === 0) {
-      setPasteMsg("업로드 실패: 데이터 형식을 인식할 수 없습니다. (헤더명 불일치)");
-      setTimeout(() => setPasteMsg(""), 4000);
-      return;
-    }
-
-    setUnmappedNames((prev) => {
-      const ex = new Set(prev.map((u) => u.name));
-      return [...prev, ...unmapped.filter((u) => !ex.has(u.name))];
-    });
-    setTransactions((prev) => {
-      const newTxs = [...prev, ...txs];
-      dbPutAll("transactions", txs).catch(console.error);
-      return newTxs;
-    });
-    setPasteMsg(`${txs.length}건 추가 완료${unmapped.length ? ` (${unmapped.length}건 티커 미확인)` : ""}`);
-    setTimeout(() => setPasteMsg(""), 4000);
-  }, [tickerMap]);
-
   const handlePaste = useCallback(() => {
     const text = pasteText.trim();
     if (!text) return;
     const rows = parseCSVText(text, "\t");
     if (rows && rows.length > 0) { 
-      processData(rows, pendingAccount || "붙여넣기"); 
+      const acct = pendingAccount || "붙여넣기";
+      const { txs, unmapped } = processRawData(rows, tickerMap, acct);
+      if (txs.length === 0) {
+        setPasteMsg("파싱 실패: 데이터를 인식할 수 없습니다.");
+        setTimeout(() => setPasteMsg(""), 4000);
+        return;
+      }
+      setUnmappedNames((prev) => {
+        const ex = new Set(prev.map((u) => u.name));
+        return [...prev, ...unmapped.filter((u) => !ex.has(u.name))];
+      });
+      setTransactions((prev) => {
+        const newTxs = [...prev, ...txs];
+        dbPutAll("transactions", txs).catch(console.error);
+        return newTxs;
+      });
+      setPasteMsg(`${txs.length}건 추가 완료`);
+      setTimeout(() => setPasteMsg(""), 4000);
       setPasteText(""); 
     } else {
       setPasteMsg("파싱 실패: 데이터를 인식할 수 없습니다.");
+      setTimeout(() => setPasteMsg(""), 4000);
     }
-  }, [pasteText, pendingAccount, processData]);
+  }, [pasteText, pendingAccount, tickerMap]);
 
   const handleFileDrop = useCallback(async (e: React.DragEvent | React.ChangeEvent<HTMLInputElement>) => {
     e.preventDefault();
-    const file = (e as React.DragEvent).dataTransfer?.files?.[0] || (e.target as HTMLInputElement)?.files?.[0];
-    if (!file) return;
+    const files = Array.from(('dataTransfer' in e ? (e as React.DragEvent).dataTransfer?.files : (e.target as HTMLInputElement)?.files) || []);
+    if (!files.length) return;
 
     if ('target' in e && e.target instanceof HTMLInputElement) {
       e.target.value = '';
     }
 
-    const acct = pendingAccount || file.name.replace(/\.[^.]+$/, "");
-    try {
-      const d = await parseFile(file);
-      
-      const headerRow = d.rows.slice(0, 5).find(r => r && Array.isArray(r) && r.some(h => String(h).includes("표준코드")));
-      if (headerRow) {
-        const headerStrings = headerRow.map(String);
-        const codeIdx = headerStrings.findIndex(h => h.includes("단축코드"));
-        const name1Idx = headerStrings.findIndex(h => h.includes("한글 종목명") || h.replace(/\s+/g, '') === "한글종목명");
-        const name2Idx = headerStrings.findIndex(h => h.includes("한글 종목약명") || h.replace(/\s+/g, '') === "한글종목약명");
-        
-        if (codeIdx > -1) {
-          const newMappings: Record<string, string> = {};
-          let count = 0;
-          for (let i = 0; i < d.rows.length; i++) {
-            const row = d.rows[i];
-            if (!Array.isArray(row) || row === headerRow) continue;
-            let code = String(row[codeIdx] || "").trim();
-            
-            if (code && /^\d+$/.test(code) && code.length < 6) {
-              code = code.padStart(6, "0");
-            }
-            
-            const n1 = name1Idx > -1 ? String(row[name1Idx] || "").trim() : "";
-            const n2 = name2Idx > -1 ? String(row[name2Idx] || "").trim() : "";
-            
-            if (code && code !== "NaN" && code.length > 0 && !code.includes("단축코드")) {
-              if (n1 && n1 !== "NaN") { newMappings[n1] = code; count++; }
-              if (n2 && n2 !== "NaN" && n2 !== n1) { newMappings[n2] = code; count++; }
-            }
-          }
-          
-          if (count > 0) {
-            const newMapArray = Object.entries(newMappings).map(([n, t]) => ({ name: n, ticker: t }));
-            setTickerMap(prev => ({ ...prev, ...newMappings }));
-            dbPutAll("tickerMap", newMapArray).catch(console.error);
-            
-            setPasteMsg(`한국주식 마스터 사전 등록 완료! (${count}개 종목 매핑)`);
-            setTimeout(() => setPasteMsg(""), 4000);
-            return; 
-          }
-        }
-      }
+    let allTxs: Transaction[] = [];
+    let allUnmapped: UnmappedName[] = [];
+    let masterDictCount = 0;
+    let newMapCache = { ...tickerMap };
 
-      processData(d.rows, acct);
-    } catch (err) {
-      setPasteMsg(`파일 파싱 실패: ${err}`);
-      setTimeout(() => setPasteMsg(""), 4000);
+    const extractAccountName = (fileName: string) => {
+      return fileName
+        .replace(/^자산관리_대표\s*-\s*/, '')
+        .replace(/\s*\(\d+\)/g, '')
+        .replace(/\.[^.]+$/, '')
+        .trim();
+    };
+
+    for (const file of files) {
+      try {
+        const d = await parseFile(file);
+        
+        const headerRow = d.rows.slice(0, 5).find(r => r && Array.isArray(r) && r.some(h => String(h).includes("표준코드")));
+        if (headerRow) {
+          const headerStrings = headerRow.map(String);
+          const codeIdx = headerStrings.findIndex(h => h.includes("단축코드"));
+          const name1Idx = headerStrings.findIndex(h => h.includes("한글 종목명") || h.replace(/\s+/g, '') === "한글종목명");
+          const name2Idx = headerStrings.findIndex(h => h.includes("한글 종목약명") || h.replace(/\s+/g, '') === "한글종목약명");
+          
+          if (codeIdx > -1) {
+            const newMappings: Record<string, string> = {};
+            let count = 0;
+            for (let i = 0; i < d.rows.length; i++) {
+              const row = d.rows[i];
+              if (!Array.isArray(row) || row === headerRow) continue;
+              let code = String(row[codeIdx] || "").trim();
+              
+              if (code && /^\d+$/.test(code) && code.length < 6) {
+                code = code.padStart(6, "0");
+              }
+              
+              const n1 = name1Idx > -1 ? String(row[name1Idx] || "").trim() : "";
+              const n2 = name2Idx > -1 ? String(row[name2Idx] || "").trim() : "";
+              
+              if (code && code !== "NaN" && code.length > 0 && !code.includes("단축코드")) {
+                if (n1 && n1 !== "NaN") { newMappings[n1] = code; count++; }
+                if (n2 && n2 !== "NaN" && n2 !== n1) { newMappings[n2] = code; count++; }
+              }
+            }
+            if (count > 0) {
+              newMapCache = { ...newMapCache, ...newMappings };
+              masterDictCount += count;
+            }
+          }
+          continue; 
+        }
+
+        const acct = pendingAccount || extractAccountName(file.name);
+        const { txs, unmapped } = processRawData(d.rows, newMapCache, acct);
+        allTxs = [...allTxs, ...txs];
+        allUnmapped = [...allUnmapped, ...unmapped];
+      } catch (err) {
+        console.error(`파싱 실패 (${file.name}):`, err);
+      }
     }
-  }, [pendingAccount, processData]);
+
+    if (masterDictCount > 0) {
+      const newMapArray = Object.entries(newMapCache).map(([n, t]) => ({ name: n, ticker: t }));
+      setTickerMap(newMapCache);
+      dbPutAll("tickerMap", newMapArray).catch(console.error);
+      setPasteMsg(`한국주식 마스터 사전 등록 완료! (${masterDictCount}개 종목 매핑)`);
+    }
+
+    if (allTxs.length > 0) {
+      setUnmappedNames((prev) => {
+        const ex = new Set(prev.map((u) => u.name));
+        return [...prev, ...allUnmapped.filter((u) => !ex.has(u.name))];
+      });
+      setTransactions((prev) => {
+        const newTxs = [...prev, ...allTxs];
+        dbPutAll("transactions", allTxs).catch(console.error);
+        return newTxs;
+      });
+      if (masterDictCount === 0) setPasteMsg(`${allTxs.length}건 추가 완료`);
+    }
+
+    setTimeout(() => setPasteMsg(""), 4000);
+  }, [pendingAccount, tickerMap]);
 
   const applyTickerMap = useCallback((name: string, ticker: string) => {
     const updated = { ...tickerMap, [name]: ticker };
@@ -441,16 +508,30 @@ export default function DashboardApp() {
   };
 
   const sortedClosedByDate = useMemo(() => [...closedHoldings].sort((a, b) => (b.lastSellDate || "").localeCompare(a.lastSellDate || "")), [closedHoldings]);
-  const tickerListAll = useMemo(() => {
+  
+  const filteredTickerListAll = useMemo(() => {
+    let items = [...activeHoldings.map(h => ({ ...h, _active: true })), ...sortedClosedByDate.map(h => ({ ...h, _active: false }))];
+    if (analysisFilter !== "ALL") {
+      items = items.filter(h => h.assetClass === analysisFilter);
+    }
     const q = tickerSearch.toLowerCase();
-    const allItems = [
-      ...activeHoldings.map((h) => ({ ...h, _active: true })),
-      ...sortedClosedByDate.map((h) => ({ ...h, _active: false })),
-    ];
-    return q ? allItems.filter((h) => h.name?.toLowerCase().includes(q) || (h.ticker || "").toLowerCase().includes(q)) : allItems;
-  }, [activeHoldings, sortedClosedByDate, tickerSearch]);
-  const tickerPages = Math.ceil(tickerListAll.length / TICKER_PAGE_SIZE);
-  const tickerPageItems = tickerListAll.slice(tickerPage * TICKER_PAGE_SIZE, (tickerPage + 1) * TICKER_PAGE_SIZE);
+    if (q) {
+      items = items.filter((h) => h.name?.toLowerCase().includes(q) || (h.ticker || "").toLowerCase().includes(q));
+    }
+    return items.sort((a, b) => {
+      let valA, valB;
+      if (analysisSort.key === 'name') {
+         valA = displayName(a); valB = displayName(b);
+         return analysisSort.desc ? valB.localeCompare(valA) : valA.localeCompare(valB);
+      }
+      if (analysisSort.key === 'realizedPnL') { valA = a.realizedPnL; valB = b.realizedPnL; }
+      else { valA = a.totalCost; valB = b.totalCost; }
+      return analysisSort.desc ? valB - valA : valA - valB;
+    });
+  }, [activeHoldings, sortedClosedByDate, analysisFilter, tickerSearch, analysisSort]);
+
+  const tickerPages = Math.ceil(filteredTickerListAll.length / TICKER_PAGE_SIZE);
+  const tickerPageItems = filteredTickerListAll.slice(tickerPage * TICKER_PAGE_SIZE, (tickerPage + 1) * TICKER_PAGE_SIZE);
 
   const savePortfolio = () => {
     if (!newPortfolioName.trim() || !portfolioTickers.size) return;
@@ -496,6 +577,17 @@ export default function DashboardApp() {
       </div>
     );
 
+  const DASH_COLS = [
+    { label: "종목", key: "name", align: "left" },
+    { label: "수량", key: "qty", align: "right" },
+    { label: "매수금액", key: "totalCost", align: "right", sortable: true },
+    { label: "현재가", key: "price", align: "right" },
+    { label: "평가금액", key: "marketValue", align: "right", sortable: true },
+    { label: "평가손익", key: "pnl", align: "right", sortable: true },
+    { label: "실현손익", key: "realizedPnL", align: "right", sortable: true },
+    { label: "수익률", key: "pnlPct", align: "right", sortable: true },
+  ];
+
   return (
     <div className="bg-background min-h-screen text-foreground overflow-x-hidden">
       <header className="border-b border-border/50 px-6 flex items-center justify-between h-[60px] backdrop-blur-md bg-background/90 sticky top-0 z-50 shadow-sm">
@@ -512,7 +604,7 @@ export default function DashboardApp() {
           <Upload className="w-4 h-4" />
           파일 업로드
         </button>
-        <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv,.tsv,.txt" className="hidden" onChange={handleFileDrop} />
+        <input ref={fileInputRef} type="file" multiple accept=".xlsx,.xls,.csv,.tsv,.txt" className="hidden" onChange={handleFileDrop} />
       </header>
 
       <nav className="border-b border-border/50 px-4 flex overflow-x-auto bg-card/30 backdrop-blur-sm">
@@ -565,12 +657,12 @@ export default function DashboardApp() {
       )}
       {pasteMsg && (
         <div className={`mx-6 mt-2 rounded-xl px-4 py-3 text-xs border-2 shadow-md animate-scale-in font-medium ${
-          pasteMsg.includes("완료")
+          pasteMsg.includes("완료") || pasteMsg.includes("추가")
             ? "bg-gradient-to-r from-[#0d1f12] to-[#0d1812] border-primary text-primary"
             : "bg-gradient-to-r from-[#1f0d0d] to-[#1a0d0d] border-[#7f1d1d] text-negative"
         }`}>
           <div className="flex items-center gap-2">
-            <span className={`w-1.5 h-1.5 rounded-full ${pasteMsg.includes("완료") ? "bg-primary" : "bg-negative"} animate-pulse`}></span>
+            <span className={`w-1.5 h-1.5 rounded-full ${pasteMsg.includes("완료") || pasteMsg.includes("추가") ? "bg-primary" : "bg-negative"} animate-pulse`}></span>
             {pasteMsg}
           </div>
         </div>
@@ -620,15 +712,19 @@ export default function DashboardApp() {
                         <th className="px-3 py-2.5 text-center w-8">
                           <input type="checkbox" className="w-3.5 h-3.5 cursor-pointer" checked={checkedHoldings.size === activeHoldings.length && activeHoldings.length > 0} onChange={toggleAllHoldings} />
                         </th>
-                        {["종목", "수량", "매입단가", "현재가", "평가금액", "손익", "수익률"].map((h) => (
-                          <th key={h} className="px-3 py-2.5 text-right font-semibold whitespace-nowrap">{h}</th>
+                        {DASH_COLS.map((c) => (
+                          <th 
+                            key={c.key} 
+                            className={`px-3 py-2.5 text-${c.align} font-semibold whitespace-nowrap ${c.sortable ? 'cursor-pointer hover:text-primary transition-colors' : ''}`}
+                            onClick={() => c.sortable && handleDashSort(c.key)}
+                          >
+                            {c.label} {dashSort.key === c.key ? (dashSort.desc ? '↓' : '↑') : ''}
+                          </th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
-                      {[...activeHoldings]
-                        .sort((a, b) => (currentPrices[b.ticker] || b.avgCost) * b.qty - (currentPrices[a.ticker] || a.avgCost) * a.qty)
-                        .map((h, idx) => {
+                      {sortedActiveHoldings.map((h, idx) => {
                           const price = currentPrices[h.ticker] || h.avgCost;
                           const mv = h.qty * price;
                           const pnl = mv - h.totalCost;
@@ -648,10 +744,11 @@ export default function DashboardApp() {
                                 <div className="text-[10px] text-muted-foreground mt-0.5">{/^\d{5,6}$/.test(h.ticker) ? h.ticker : h.name}</div>
                               </td>
                               <td className="px-3 py-3 text-right tabular-nums font-medium">{fmt(h.qty)}</td>
-                              <td className="px-3 py-3 text-right tabular-nums text-muted-foreground">{h.currency === "USD" ? "$" : "₩"}{fmt(h.avgCost, 1)}</td>
+                              <td className="px-3 py-3 text-right tabular-nums text-muted-foreground">₩{fmt(h.totalCost)}</td>
                               <td className="px-3 py-3 text-right text-card-foreground tabular-nums font-semibold">{h.currency === "USD" ? "$" : "₩"}{fmt(price, 1)}</td>
                               <td className="px-3 py-3 text-right text-card-foreground tabular-nums font-semibold">₩{fmt(mv)}</td>
                               <td className="px-3 py-3 text-right tabular-nums font-semibold" style={{ color: pnlColor(pnl) }}>{pnl >= 0 ? "+" : ""}₩{fmt(pnl)}</td>
+                              <td className="px-3 py-3 text-right tabular-nums font-semibold" style={{ color: pnlColor(h.realizedPnL) }}>{h.realizedPnL >= 0 ? "+" : ""}₩{fmt(h.realizedPnL)}</td>
                               <td className="px-3 py-3 text-right tabular-nums font-bold" style={{ color: pnlColor(pnlPctVal) }}>{fmtPct(pnlPctVal)}</td>
                             </tr>
                           );
@@ -664,7 +761,7 @@ export default function DashboardApp() {
                       <div className="text-sm text-muted-foreground mb-2 font-medium">아직 거래 내역이 없습니다</div>
                       <div className="text-xs text-muted-foreground/60 leading-relaxed">
                         우측 <span className="text-primary font-semibold">데이터 입력</span> 패널에서<br />
-                        HTS 화면을 복사/붙여넣기 하거나 파일을 드롭하세요
+                        여러 개의 CSV 파일을 한 번에 드래그하여 올릴 수 있습니다
                       </div>
                     </div>
                   )}
@@ -701,7 +798,7 @@ export default function DashboardApp() {
                     <input
                       value={pendingAccount}
                       onChange={(e) => setPendingAccount(e.target.value)}
-                      placeholder="예: MTS 위탁계좌"
+                      placeholder="입력 시 이 이름으로 고정"
                       className="bg-muted/70 border-2 border-input rounded-xl px-3 py-2 text-card-foreground text-xs focus:border-primary/50 focus:bg-muted transition-all duration-300"
                     />
                   </label>
@@ -713,7 +810,7 @@ export default function DashboardApp() {
                     onClick={() => fileInputRef.current?.click()}
                   >
                     <Upload className="w-6 h-6 mx-auto mb-2 text-muted-foreground/50" />
-                    <div className="text-[10px] text-muted-foreground font-medium">xlsx / csv / tsv 드롭</div>
+                    <div className="text-[10px] text-muted-foreground font-medium">여러 파일 드롭 가능</div>
                   </div>
                   <textarea
                     value={pasteText}
@@ -825,8 +922,8 @@ export default function DashboardApp() {
 
         {activeTab === 2 && (
           <div className="flex gap-4">
-            <div className="w-[200px] shrink-0 flex flex-col gap-2">
-              <div className="relative">
+            <div className="w-[240px] shrink-0 flex flex-col gap-2">
+              <div className="relative mb-1">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
                 <input
                   value={tickerSearch}
@@ -835,46 +932,75 @@ export default function DashboardApp() {
                   className="w-full bg-card border border-input rounded-lg pl-8 pr-3 py-2 text-card-foreground text-[11px] focus:border-primary/50 transition-colors"
                 />
               </div>
-              {tickerPageItems.filter((h) => h._active).length > 0 && (
-                <div className="text-[10px] text-primary px-0.5 tracking-wide">▸ 보유중</div>
-              )}
-              {tickerPageItems.filter((h) => h._active).map((h) => (
-                <button
-                  key={h.ticker}
-                  onClick={() => setSelectedTicker(h.ticker)}
-                  className={`rounded-lg px-2.5 py-2 text-left cursor-pointer transition-all border ${
-                    selectedTicker === h.ticker
-                      ? "bg-[#0d2818] border-primary"
-                      : "bg-card border-border hover:border-input"
-                  }`}
-                >
-                  <div className={`text-xs font-semibold ${selectedTicker === h.ticker ? "text-primary" : "text-card-foreground"}`}>{displayName(h)}</div>
-                  <div className="text-[10px] text-muted-foreground mt-0.5">{ASSET_CLASS_LABEL[h.assetClass] || ""}</div>
-                </button>
-              ))}
-              {!tickerSearch && tickerPageItems.filter((h) => !h._active).length > 0 && (
-                <div className="text-[10px] text-muted-foreground/80 px-0.5 tracking-wide mt-1">▸ 청산 종목</div>
-              )}
-              {tickerPageItems.filter((h) => !h._active).map((h) => (
-                <button
-                  key={h.ticker}
-                  onClick={() => setSelectedTicker(h.ticker)}
-                  className={`rounded-lg px-2.5 py-2 text-left cursor-pointer transition-all border opacity-75 ${
-                    selectedTicker === h.ticker
-                      ? "bg-[#1a1020] border-chart-5"
-                      : "bg-muted border-border hover:border-input"
-                  }`}
-                >
-                  <div className={`text-[11px] font-semibold ${selectedTicker === h.ticker ? "text-chart-5" : "text-muted-foreground/80"}`}>{displayName(h)}</div>
-                  <div className="text-[9px] text-muted-foreground/60 mt-0.5">{h.lastSellDate} 청산</div>
-                </button>
-              ))}
-              {tickerListAll.length === 0 && (
-                <div className="px-1 py-5 text-center">
-                  <Search className="w-6 h-6 mx-auto mb-2 text-muted-foreground/30" />
-                  <div className="text-[11px] text-muted-foreground/50 leading-relaxed">거래 내역을 먼저<br />입력해 주세요</div>
-                </div>
-              )}
+              
+              <div className="flex flex-wrap gap-1 mb-2">
+                {[{k:'ALL', l:'전체'}, {k:'KR_STOCK', l:'🇰🇷주식'}, {k:'US_STOCK', l:'🇺🇸주식'}, {k:'KR_ETF', l:'🇰🇷ETF'}, {k:'US_ETF', l:'🇺🇸ETF'}, {k:'GOLD', l:'금'}].map(f => (
+                  <button 
+                    key={f.k} 
+                    onClick={() => { setAnalysisFilter(f.k); setTickerPage(0); }} 
+                    className={`px-2 py-1 text-[10px] rounded border transition-colors ${analysisFilter === f.k ? 'bg-primary border-primary text-primary-foreground' : 'bg-card border-input text-muted-foreground hover:bg-muted'}`}
+                  >
+                    {f.l}
+                  </button>
+                ))}
+              </div>
+
+              <select 
+                value={`${analysisSort.key}-${analysisSort.desc}`}
+                onChange={(e) => {
+                  const [k, d] = e.target.value.split('-');
+                  setAnalysisSort({ key: k, desc: d === 'true' });
+                }}
+                className="w-full bg-card border border-input rounded-lg px-2 py-1.5 text-[10px] text-muted-foreground focus:border-primary/50 outline-none mb-1"
+              >
+                <option value="name-false">이름순 (가~하)</option>
+                <option value="realizedPnL-true">실현손익 (높은순)</option>
+                <option value="totalCost-true">투자규모 (높은순)</option>
+              </select>
+
+              <div className="flex-1 overflow-y-auto pr-1 space-y-1 mt-1">
+                {tickerPageItems.filter((h) => h._active).length > 0 && (
+                  <div className="text-[10px] text-primary px-0.5 tracking-wide mb-1">▸ 보유중</div>
+                )}
+                {tickerPageItems.filter((h) => h._active).map((h) => (
+                  <button
+                    key={h.ticker}
+                    onClick={() => setSelectedTicker(h.ticker)}
+                    className={`w-full rounded-lg px-2.5 py-2 text-left cursor-pointer transition-all border ${
+                      selectedTicker === h.ticker
+                        ? "bg-[#0d2818] border-primary"
+                        : "bg-card border-border hover:border-input"
+                    }`}
+                  >
+                    <div className={`text-xs font-semibold ${selectedTicker === h.ticker ? "text-primary" : "text-card-foreground"}`}>{displayName(h)}</div>
+                    <div className="text-[10px] text-muted-foreground mt-0.5">{ASSET_CLASS_LABEL[h.assetClass] || ""}</div>
+                  </button>
+                ))}
+                {!tickerSearch && tickerPageItems.filter((h) => !h._active).length > 0 && (
+                  <div className="text-[10px] text-muted-foreground/80 px-0.5 tracking-wide mt-2 mb-1">▸ 청산 종목</div>
+                )}
+                {tickerPageItems.filter((h) => !h._active).map((h) => (
+                  <button
+                    key={h.ticker}
+                    onClick={() => setSelectedTicker(h.ticker)}
+                    className={`w-full rounded-lg px-2.5 py-2 text-left cursor-pointer transition-all border opacity-75 ${
+                      selectedTicker === h.ticker
+                        ? "bg-[#1a1020] border-chart-5"
+                        : "bg-muted border-border hover:border-input"
+                    }`}
+                  >
+                    <div className={`text-[11px] font-semibold ${selectedTicker === h.ticker ? "text-chart-5" : "text-muted-foreground/80"}`}>{displayName(h)}</div>
+                    <div className="text-[9px] text-muted-foreground/60 mt-0.5">{h.lastSellDate} 청산</div>
+                  </button>
+                ))}
+                {filteredTickerListAll.length === 0 && (
+                  <div className="px-1 py-5 text-center">
+                    <Search className="w-6 h-6 mx-auto mb-2 text-muted-foreground/30" />
+                    <div className="text-[11px] text-muted-foreground/50 leading-relaxed">조건에 맞는 종목이 없습니다</div>
+                  </div>
+                )}
+              </div>
+              
               {tickerPages > 1 && (
                 <div className="flex items-center gap-1.5 mt-1">
                   <button className="p-1.5 rounded-md bg-card border border-input text-muted-foreground hover:bg-surface-elevated disabled:opacity-30 transition-colors" disabled={tickerPage === 0} onClick={() => setTickerPage((p) => p - 1)}><ChevronLeft className="w-3.5 h-3.5" /></button>
@@ -1038,12 +1164,12 @@ export default function DashboardApp() {
               })}
             </div>
             <div className="bg-card rounded-[14px] p-4 border border-border">
-              <div className="text-[10px] text-muted-foreground mb-3 tracking-wider uppercase">보유 종목 현황 — 자동 시세 연동</div>
+              <div className="text-[10px] text-muted-foreground mb-3 tracking-wider uppercase">보유 종목 현황 — 실시간 시세 연동됨</div>
               <div className="overflow-x-auto">
                 <table className="w-full border-collapse text-xs">
                   <thead>
                     <tr className="text-muted-foreground text-[10px] border-b border-input">
-                      {["카테고리", "종목", "수량", "평균단가", "현재시세", "평가금액", "손익", "수익률", "비중"].map((h) => (
+                      {["카테고리", "종목", "수량", "평균단가", "현재가", "평가금액", "손익", "수익률", "비중"].map((h) => (
                         <th key={h} className="px-2.5 py-2 text-right font-normal whitespace-nowrap">{h}</th>
                       ))}
                     </tr>
