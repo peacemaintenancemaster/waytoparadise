@@ -214,7 +214,7 @@ export default function DashboardApp() {
   const closedHoldings = useMemo(() => Object.values(holdings).filter((h) => h.qty === 0 && h.realizedPnL !== 0), [holdings]);
   const allAccounts = useMemo(() => ["전체", ...new Set(transactions.map((t) => t.account).filter(Boolean))], [transactions]);
 
-  // 자동 시세 연동
+// 자동 시세 연동 (내부 API 라우트 사용)
   useEffect(() => {
     const fetchPrices = async () => {
       const toFetch = activeHoldings.filter(h => h.ticker && !fetchedRef.current.has(h.ticker));
@@ -223,11 +223,6 @@ export default function DashboardApp() {
       toFetch.forEach(h => fetchedRef.current.add(h.ticker as string));
       const fetchedPrices: Record<string, number> = {};
       let hasChanges = false;
-
-      const proxies = [
-        (url: string) => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
-        (url: string) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`
-      ];
 
       await Promise.all(toFetch.map(async (h) => {
         let tickersToTry = [h.ticker as string];
@@ -238,27 +233,20 @@ export default function DashboardApp() {
         }
 
         for (const t of tickersToTry) {
-          const url = `https://query1.finance.yahoo.com/v8/finance/chart/${t}`;
-          let success = false;
-          for (const p of proxies) {
-            try {
-              const res = await fetch(p(url));
-              if (!res.ok) continue;
-              const data = await res.json();
-              let parsed = data;
-              if (data.contents) {
-                try { parsed = JSON.parse(data.contents); } catch(e) {}
-              }
-              const price = parsed?.chart?.result?.[0]?.meta?.regularMarketPrice;
-              if (price) {
-                fetchedPrices[h.ticker as string] = price;
-                success = true;
-                hasChanges = true;
-                break;
-              }
-            } catch (e) {}
+          try {
+            // 외부 프록시 대신 우리가 만든 2단계의 내부 API 라우트를 호출합니다.
+            const res = await fetch(`/api/price?ticker=${encodeURIComponent(t)}`);
+            if (!res.ok) continue;
+            
+            const data = await res.json();
+            if (data.price) {
+              fetchedPrices[h.ticker as string] = data.price;
+              hasChanges = true;
+              break; // 가격을 찾으면 다음 티커 시도는 중단
+            }
+          } catch (e) {
+            console.error("Price fetch error for", t, e);
           }
-          if (success) break;
         }
       }));
 
@@ -273,7 +261,7 @@ export default function DashboardApp() {
 
     fetchPrices();
   }, [activeHoldings]);
-
+  
   const totalCost = useMemo(() => activeHoldings.reduce((s, h) => s + h.totalCost, 0), [activeHoldings]);
   const totalMarketValue = useMemo(() => activeHoldings.reduce((s, h) => s + (currentPrices[h.ticker] || h.avgCost) * h.qty, 0), [activeHoldings, currentPrices]);
   const totalUnrealizedPnL = totalMarketValue - totalCost;

@@ -1,6 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: 'export',
+  // output: 'export', // <- 이 줄을 지우거나 주석 처리하세요.
   typescript: {
     ignoreBuildErrors: true,
   },
