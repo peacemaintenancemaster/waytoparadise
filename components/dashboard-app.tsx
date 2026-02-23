@@ -162,10 +162,10 @@ export default function DashboardApp() {
   const [loadingDB, setLoadingDB] = useState(true);
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
   const [tickerSearch, setTickerSearch] = useState("");
-  const [txSearch, setTxSearch] = useState(""); // 추가된 거래내역 검색 상태
+  const [txSearch, setTxSearch] = useState(""); 
   const [tickerPage, setTickerPage] = useState(0);
   const [checkedTxIds, setCheckedTxIds] = useState<Set<number>>(new Set());
-  const [checkedHoldings, setCheckedHoldings] = useState<Set<string>>(new Set()); // 추가된 자산 일괄삭제 선택 상태
+  const [checkedHoldings, setCheckedHoldings] = useState<Set<string>>(new Set()); 
   const [txAccountFilter, setTxAccountFilter] = useState("전체");
   const [selectedMacroIds, setSelectedMacroIds] = useState<Set<string>>(new Set(DEFAULT_SELECTED_MACRO));
   const [macroRegionFilter, setMacroRegionFilter] = useState("전체");
@@ -177,6 +177,7 @@ export default function DashboardApp() {
   const [portfolioTargetWeights, setPortfolioTargetWeights] = useState<Record<string, number>>({});
   const [pfCategoryFilter, setPfCategoryFilter] = useState("ALL");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const fetchedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     (async () => {
@@ -191,6 +192,11 @@ export default function DashboardApp() {
         maps.forEach((m) => { tm[m.name] = m.ticker; });
         setTickerMap(tm);
         if (pfls.length) setPortfolios(pfls);
+        
+        const savedPrices = localStorage.getItem("waytoparadise_prices");
+        if (savedPrices) {
+          try { setCurrentPrices(JSON.parse(savedPrices)); } catch (e) {}
+        }
       } catch (e) {
         console.error("DB load error", e);
       }
@@ -202,6 +208,59 @@ export default function DashboardApp() {
   const activeHoldings = useMemo(() => Object.values(holdings).filter((h) => h.qty > 0), [holdings]);
   const closedHoldings = useMemo(() => Object.values(holdings).filter((h) => h.qty === 0 && h.realizedPnL !== 0), [holdings]);
   const allAccounts = useMemo(() => ["전체", ...new Set(transactions.map((t) => t.account).filter(Boolean))], [transactions]);
+
+  // 실시간 시세 자동 연동 로직
+  useEffect(() => {
+    const fetchPrices = async () => {
+      const toFetch = activeHoldings.filter(h => h.ticker && !fetchedRef.current.has(h.ticker));
+      if (toFetch.length === 0) return;
+      
+      toFetch.forEach(h => fetchedRef.current.add(h.ticker as string));
+      const fetchedPrices: Record<string, number> = {};
+      let hasChanges = false;
+
+      await Promise.all(toFetch.map(async (h) => {
+        let tickersToTry = [h.ticker as string];
+        if (h.assetClass === "KR_STOCK" || h.assetClass === "KR_ETF") {
+          tickersToTry = [`${h.ticker}.KS`, `${h.ticker}.KQ`];
+        } else if (h.assetClass === "GOLD") {
+          tickersToTry = ["GC=F"];
+        }
+
+        for (const t of tickersToTry) {
+          try {
+            const url = `https://query1.finance.yahoo.com/v8/finance/chart/${t}`;
+            const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
+            const res = await fetch(proxyUrl);
+            if (!res.ok) continue;
+            
+            const data = await res.json();
+            if (data.contents) {
+              const parsed = JSON.parse(data.contents);
+              const price = parsed.chart?.result?.[0]?.meta?.regularMarketPrice;
+              if (price) {
+                fetchedPrices[h.ticker as string] = price;
+                hasChanges = true;
+                break;
+              }
+            }
+          } catch (e) {
+            console.error("Price fetch error for", t, e);
+          }
+        }
+      }));
+
+      if (hasChanges) {
+        setCurrentPrices(prev => {
+          const merged = { ...prev, ...fetchedPrices };
+          localStorage.setItem("waytoparadise_prices", JSON.stringify(merged));
+          return merged;
+        });
+      }
+    };
+
+    fetchPrices();
+  }, [activeHoldings]);
 
   const totalCost = useMemo(() => activeHoldings.reduce((s, h) => s + h.totalCost, 0), [activeHoldings]);
   const totalMarketValue = useMemo(() => activeHoldings.reduce((s, h) => s + (currentPrices[h.ticker] || h.avgCost) * h.qty, 0), [activeHoldings, currentPrices]);
@@ -317,7 +376,7 @@ export default function DashboardApp() {
             setTickerMap(prev => ({ ...prev, ...newMappings }));
             dbPutAll("tickerMap", newMapArray).catch(console.error);
             
-            setPasteMsg(`✅ 한국주식 마스터 사전 등록 완료! (${count}개 종목 매핑)`);
+            setPasteMsg(`한국주식 마스터 사전 등록 완료! (${count}개 종목 매핑)`);
             setTimeout(() => setPasteMsg(""), 4000);
             return; 
           }
@@ -343,7 +402,6 @@ export default function DashboardApp() {
     setUnmappedNames((prev) => prev.filter((u) => u.name !== name));
   }, [tickerMap]);
 
-  // 자산(종목) 일괄 삭제 로직
   const toggleCheckedHolding = (key: string) => setCheckedHoldings((prev) => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
   const toggleAllHoldings = () => checkedHoldings.size === activeHoldings.length ? setCheckedHoldings(new Set()) : setCheckedHoldings(new Set(activeHoldings.map(h => h.ticker)));
   const deleteCheckedHoldings = async () => {
@@ -356,7 +414,6 @@ export default function DashboardApp() {
     setCheckedHoldings(new Set());
   };
 
-  // 거래내역 일괄 삭제 로직
   const toggleCheckedTx = (id: number) => setCheckedTxIds((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const filteredTxs = useMemo(() => {
     let base = txAccountFilter === "전체" ? transactions : transactions.filter((t) => t.account === txAccountFilter);
@@ -371,6 +428,7 @@ export default function DashboardApp() {
     }
     return [...base].reverse();
   }, [transactions, txAccountFilter, txSearch]);
+  
   const toggleAllTx = () => checkedTxIds.size === filteredTxs.length ? setCheckedTxIds(new Set()) : setCheckedTxIds(new Set(filteredTxs.map((t) => t.id)));
   const deleteCheckedTx = async () => {
     if (!checkedTxIds.size || !confirm(`선택한 ${checkedTxIds.size}건을 삭제하시겠습니까?`)) return;
@@ -562,7 +620,7 @@ export default function DashboardApp() {
                         <th className="px-3 py-2.5 text-center w-8">
                           <input type="checkbox" className="w-3.5 h-3.5 cursor-pointer" checked={checkedHoldings.size === activeHoldings.length && activeHoldings.length > 0} onChange={toggleAllHoldings} />
                         </th>
-                        {["종목", "수량", "평균단가", "평가금액", "손익", "수익률"].map((h) => (
+                        {["종목", "수량", "매입단가", "현재가", "평가금액", "손익", "수익률"].map((h) => (
                           <th key={h} className="px-3 py-2.5 text-right font-semibold whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
@@ -591,6 +649,7 @@ export default function DashboardApp() {
                               </td>
                               <td className="px-3 py-3 text-right tabular-nums font-medium">{fmt(h.qty)}</td>
                               <td className="px-3 py-3 text-right tabular-nums text-muted-foreground">{h.currency === "USD" ? "$" : "₩"}{fmt(h.avgCost, 1)}</td>
+                              <td className="px-3 py-3 text-right text-card-foreground tabular-nums font-semibold">{h.currency === "USD" ? "$" : "₩"}{fmt(price, 1)}</td>
                               <td className="px-3 py-3 text-right text-card-foreground tabular-nums font-semibold">₩{fmt(mv)}</td>
                               <td className="px-3 py-3 text-right tabular-nums font-semibold" style={{ color: pnlColor(pnl) }}>{pnl >= 0 ? "+" : ""}₩{fmt(pnl)}</td>
                               <td className="px-3 py-3 text-right tabular-nums font-bold" style={{ color: pnlColor(pnlPctVal) }}>{fmtPct(pnlPctVal)}</td>
@@ -979,12 +1038,12 @@ export default function DashboardApp() {
               })}
             </div>
             <div className="bg-card rounded-[14px] p-4 border border-border">
-              <div className="text-[10px] text-muted-foreground mb-3 tracking-wider uppercase">보유 종목 현황 — 현재 시세 입력</div>
+              <div className="text-[10px] text-muted-foreground mb-3 tracking-wider uppercase">보유 종목 현황 — 자동 시세 연동</div>
               <div className="overflow-x-auto">
                 <table className="w-full border-collapse text-xs">
                   <thead>
                     <tr className="text-muted-foreground text-[10px] border-b border-input">
-                      {["카테고리", "종목", "수량", "평균단가", "현재시세 (입력)", "평가금액", "손익", "수익률", "비중"].map((h) => (
+                      {["카테고리", "종목", "수량", "평균단가", "현재시세", "평가금액", "손익", "수익률", "비중"].map((h) => (
                         <th key={h} className="px-2.5 py-2 text-right font-normal whitespace-nowrap">{h}</th>
                       ))}
                     </tr>
@@ -1008,18 +1067,7 @@ export default function DashboardApp() {
                           </td>
                           <td className="px-2.5 py-2.5 text-right tabular-nums">{fmt(h.qty)}</td>
                           <td className="px-2.5 py-2.5 text-right text-muted-foreground/80 tabular-nums">{h.currency === "USD" ? "$" : "₩"}{fmt(h.avgCost, 1)}</td>
-                          <td className="px-2.5 py-2.5 text-right">
-                            <div className="flex items-center justify-end gap-1">
-                              <span className="text-[10px] text-muted-foreground">{h.currency === "USD" ? "$" : "₩"}</span>
-                              <input
-                                type="number"
-                                value={currentPrices[h.ticker] || ""}
-                                placeholder={String(Math.round(h.avgCost))}
-                                onChange={(e) => setCurrentPrices((p) => ({ ...p, [h.ticker]: parseFloat(e.target.value) || 0 }))}
-                                className="bg-muted border border-input rounded-md px-2 py-1 text-card-foreground text-xs w-[90px] text-right focus:border-primary/50 transition-colors tabular-nums"
-                              />
-                            </div>
-                          </td>
+                          <td className="px-2.5 py-2.5 text-right text-card-foreground tabular-nums font-semibold">{h.currency === "USD" ? "$" : "₩"}{fmt(price, 1)}</td>
                           <td className="px-2.5 py-2.5 text-right text-card-foreground tabular-nums">₩{fmt(mv)}</td>
                           <td className="px-2.5 py-2.5 text-right tabular-nums" style={{ color: pnlColor(pnl) }}>{pnl >= 0 ? "+" : ""}₩{fmt(pnl)}</td>
                           <td className="px-2.5 py-2.5 text-right tabular-nums" style={{ color: pnlColor(pnlPctVal) }}>{fmtPct(pnlPctVal)}</td>
