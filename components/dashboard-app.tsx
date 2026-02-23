@@ -30,38 +30,39 @@ function MacroWeatherWidget({ activeIndicators }: { activeIndicators: typeof ALL
   const compositeZ = scores.reduce((s, v) => s + v, 0) / (totalWeight || 1);
   const wx = weatherFromZScore(compositeZ, true);
   return (
-    <div className="bg-card rounded-[14px] p-5 border border-border">
-      <div className="text-[10px] text-muted-foreground tracking-wider uppercase mb-3">
+    <div className="bg-card rounded-2xl p-6 border border-border shadow-lg hover:shadow-xl transition-all duration-300 card-hover animate-fade-in">
+      <div className="text-[10px] text-muted-foreground tracking-wider uppercase mb-4 font-semibold">
         거시경제 날씨 종합
       </div>
-      <div className="flex items-center gap-4 mb-4">
-        <div className="text-5xl">{WEATHER_ICONS[wx]}</div>
+      <div className="flex items-center gap-5 mb-5">
+        <div className="text-6xl animate-scale-in">{WEATHER_ICONS[wx]}</div>
         <div>
-          <div className="text-[22px] font-bold text-card-foreground">{WEATHER_LABELS[wx]}</div>
-          <div className="text-[11px] text-muted-foreground">
-            {"종합 Z점수: "}{compositeZ.toFixed(2)}{" \u00B7 "}{activeIndicators.length}{"개 지표"}
+          <div className="text-[26px] font-bold text-card-foreground mb-1">{WEATHER_LABELS[wx]}</div>
+          <div className="text-xs text-muted-foreground">
+            {"종합 Z점수: "}{compositeZ.toFixed(2)}{" · "}{activeIndicators.length}{"개 지표"}
           </div>
         </div>
       </div>
-      <div className="flex flex-col gap-1.5">
-        {activeIndicators.map((m) => {
+      <div className="flex flex-col gap-2">
+        {activeIndicators.map((m, idx) => {
           const z = calcZScore(m.value, m.mean, m.stddev);
           const w = weatherFromZScore(z, m.positiveIsGood);
           return (
             <div
               key={m.indicator}
-              className="flex items-center justify-between bg-muted rounded-lg px-3 py-2 transition-colors hover:bg-secondary"
+              className="flex items-center justify-between bg-muted/50 rounded-xl px-4 py-3 transition-all duration-300 hover:bg-muted hover:scale-[1.02] cursor-pointer animate-slide-in-right"
+              style={{ animationDelay: `${idx * 50}ms` }}
             >
               <div className="min-w-0">
-                <span className="text-xs text-secondary-foreground">{m.label}</span>
-                <span className="text-[10px] text-muted-foreground ml-2">{m.region}</span>
+                <span className="text-xs text-secondary-foreground font-medium">{m.label}</span>
+                <span className="text-[10px] text-muted-foreground ml-2.5">{m.region}</span>
               </div>
-              <div className="flex items-center gap-2.5 shrink-0">
-                <span className="text-xs text-card-foreground tabular-nums">
+              <div className="flex items-center gap-3 shrink-0">
+                <span className="text-xs text-card-foreground tabular-nums font-semibold">
                   {m.value}{m.unit}
                 </span>
                 <span className="text-[10px] text-muted-foreground">{"Z:"}{z.toFixed(2)}</span>
-                <span className="text-base">{WEATHER_ICONS[w]}</span>
+                <span className="text-lg">{WEATHER_ICONS[w]}</span>
               </div>
             </div>
           );
@@ -96,30 +97,30 @@ function RetirementPlanner({ totalPortfolioValue }: { totalPortfolioValue: numbe
   const set = (k: string, v: number) => setParams((p) => ({ ...p, [k]: v }));
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="grid grid-cols-2 gap-3">
+    <div className="flex flex-col gap-5 animate-fade-in">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
         {([
           ["현재 자산 (원)", "currentAssets"],
           ["연간 납입액 (원)", "annualContribution"],
           ["은퇴 목표 연도", "retirementYear"],
           ["연간 목표 인출액 (원)", "targetWithdrawal"],
-        ] as const).map(([label, key]) => (
-          <label key={key} className="flex flex-col gap-1.5">
-            <span className="text-[10px] text-muted-foreground">{label}</span>
+        ] as const).map(([label, key], idx) => (
+          <label key={key} className="flex flex-col gap-2 animate-slide-in-right" style={{ animationDelay: `${idx * 50}ms` }}>
+            <span className="text-[10px] text-muted-foreground font-semibold tracking-wide">{label}</span>
             <input
               type="number"
               value={params[key]}
               onChange={(e) => set(key, parseFloat(e.target.value) || 0)}
-              className="bg-muted border border-input rounded-lg px-3 py-2 text-card-foreground text-sm w-full focus:border-primary/50 transition-colors"
+              className="bg-muted/70 border-2 border-input rounded-xl px-4 py-3 text-card-foreground text-sm w-full focus:border-primary/50 focus:bg-muted transition-all duration-300 hover:border-input/80"
             />
           </label>
         ))}
       </div>
       {result && (
-        <div className="bg-muted rounded-[14px] p-4">
-          <div className="grid grid-cols-3 gap-3 mb-4">
+        <div className="bg-gradient-to-br from-card via-card to-muted rounded-2xl p-5 shadow-lg border border-border/50 animate-scale-in">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 mb-5">
             {[
-              { label: "목표 필요 자산", value: fmtWon(result.targetFV) },
+              { label: "목표 필요 자산", value: fmtWon(result.targetFV), color: "#60a5fa" },
               {
                 label: "필요 연평균 수익률(CAGR)",
                 value: `${(result.requiredCAGR * 100).toFixed(2)}%`,
@@ -128,22 +129,25 @@ function RetirementPlanner({ totalPortfolioValue }: { totalPortfolioValue: numbe
               {
                 label: "현재 달성률",
                 value: `${Math.min(100, (params.currentAssets / result.targetFV) * 100).toFixed(1)}%`,
+                color: params.currentAssets / result.targetFV >= 0.8 ? "#4ade80" : "#fbbf24",
               },
-            ].map(({ label, value, color }) => (
-              <div key={label} className="bg-card rounded-xl p-3.5">
-                <div className="text-[10px] text-muted-foreground mb-1.5">{label}</div>
-                <div className="text-lg font-bold" style={{ color: color || "#4ade80" }}>
+            ].map(({ label, value, color }, idx) => (
+              <div key={label} className="bg-card/80 backdrop-blur-sm rounded-xl p-4 border border-border/30 hover:border-border transition-all duration-300 card-hover" style={{ animationDelay: `${idx * 100}ms` }}>
+                <div className="text-[10px] text-muted-foreground mb-2 tracking-wide">{label}</div>
+                <div className="text-xl font-bold transition-colors duration-300" style={{ color }}>
                   {value}
                 </div>
               </div>
             ))}
           </div>
-          <LineChart data={result.trajectory.map((t) => ({ value: t.value }))} height={100} />
-          <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
-            <span>{currentYear}{"년"}</span>
-            <span>{params.retirementYear}{"년"}</span>
+          <div className="bg-muted/30 rounded-xl p-4">
+            <LineChart data={result.trajectory.map((t) => ({ value: t.value }))} height={120} />
+            <div className="flex justify-between text-[10px] text-muted-foreground mt-2 font-medium">
+              <span>{currentYear}{"년"}</span>
+              <span>{params.retirementYear}{"년"}</span>
+            </div>
           </div>
-          <div className="text-[10px] text-muted-foreground/70 mt-2">
+          <div className="text-[10px] text-muted-foreground/80 mt-3 text-center">
             {"※ 물가상승률 "}{(params.inflationRate * 100).toFixed(1)}{"% 가정 / 4% 인출 규칙"}
           </div>
         </div>
@@ -357,9 +361,12 @@ export default function DashboardApp() {
   if (loadingDB)
     return (
       <div className="flex items-center justify-center h-screen bg-background">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-8 h-8 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
-          <span className="text-sm text-muted-foreground font-mono">데이터 로딩 중...</span>
+        <div className="flex flex-col items-center gap-4 animate-fade-in">
+          <div className="relative">
+            <div className="w-12 h-12 border-4 border-primary/20 border-t-primary rounded-full animate-spin" />
+            <div className="absolute inset-0 w-12 h-12 border-4 border-transparent border-b-accent rounded-full animate-spin" style={{ animationDirection: "reverse", animationDuration: "1.5s" }} />
+          </div>
+          <span className="text-sm text-muted-foreground font-mono animate-pulse">데이터 로딩 중...</span>
         </div>
       </div>
     );
@@ -367,38 +374,38 @@ export default function DashboardApp() {
   return (
     <div className="bg-background min-h-screen text-foreground overflow-x-hidden">
       {/* Header */}
-      <header className="border-b border-border px-5 flex items-center justify-between h-[52px] backdrop-blur-sm bg-background/80 sticky top-0 z-50">
-        <div className="flex items-center gap-3">
-          <div className="w-7 h-7 bg-gradient-to-br from-primary to-accent rounded-md flex items-center justify-center text-[12px] font-bold text-primary-foreground shrink-0">
+      <header className="border-b border-border/50 px-6 flex items-center justify-between h-[60px] backdrop-blur-md bg-background/90 sticky top-0 z-50 shadow-sm">
+        <div className="flex items-center gap-4 animate-slide-in-right">
+          <div className="w-8 h-8 bg-gradient-to-br from-primary via-accent to-primary rounded-xl flex items-center justify-center text-sm font-bold text-primary-foreground shrink-0 shadow-lg shadow-primary/20 hover:shadow-primary/40 transition-all duration-300 hover:scale-105 cursor-pointer">
             {"W"}
           </div>
-          <span className="text-xs font-bold text-card-foreground tracking-widest">WAY TO PARADISE</span>
+          <span className="text-sm font-bold text-card-foreground tracking-widest bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">WAY TO PARADISE</span>
         </div>
         <button
           onClick={() => fileInputRef.current?.click()}
-          className="flex items-center gap-1.5 bg-card border border-input rounded-lg px-3 py-1.5 text-xs text-secondary-foreground hover:bg-surface-elevated hover:border-input transition-all"
+          className="flex items-center gap-2 bg-gradient-to-r from-primary/10 to-accent/10 border border-primary/30 rounded-xl px-4 py-2 text-xs text-primary font-semibold hover:from-primary/20 hover:to-accent/20 hover:border-primary/50 hover:scale-105 transition-all duration-300 shadow-md hover:shadow-lg animate-fade-in"
         >
-          <Upload className="w-3.5 h-3.5" />
+          <Upload className="w-4 h-4" />
           파일 업로드
         </button>
         <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv,.tsv,.txt" className="hidden" onChange={handleFileDrop} />
       </header>
 
       {/* Tabs */}
-      <nav className="border-b border-border px-3 flex overflow-x-auto">
+      <nav className="border-b border-border/50 px-4 flex overflow-x-auto bg-card/30 backdrop-blur-sm">
         {TABS.map((t, i) => {
           const Icon = TAB_ICONS[i];
           return (
             <button
               key={t}
-              className={`flex items-center gap-1.5 px-3.5 py-2.5 text-xs whitespace-nowrap tracking-wide transition-all border-b-2 ${
+              className={`flex items-center gap-2 px-5 py-3.5 text-xs whitespace-nowrap tracking-wide transition-all duration-300 border-b-2 font-medium ${
                 activeTab === i
-                  ? "text-primary border-primary"
-                  : "text-muted-foreground border-transparent hover:text-secondary-foreground"
+                  ? "text-primary border-primary bg-primary/5 shadow-sm"
+                  : "text-muted-foreground border-transparent hover:text-secondary-foreground hover:bg-muted/30"
               }`}
               onClick={() => setActiveTab(i)}
             >
-              <Icon className="w-3.5 h-3.5" />
+              <Icon className="w-4 h-4" />
               {t}
             </button>
           );
@@ -407,25 +414,26 @@ export default function DashboardApp() {
 
       {/* Alerts */}
       {unmappedNames.length > 0 && (
-        <div className="mx-5 mt-2.5 bg-[#1a150a] border border-[#5c3d00] rounded-xl px-3.5 py-2.5">
-          <div className="text-[10px] text-warning mb-2 font-medium">
+        <div className="mx-6 mt-3 bg-gradient-to-r from-[#1a150a] to-[#1a100a] border-2 border-[#5c3d00] rounded-2xl px-4 py-3.5 shadow-lg animate-fade-in">
+          <div className="text-xs text-warning mb-3 font-bold flex items-center gap-2">
+            <span className="w-1.5 h-1.5 bg-warning rounded-full animate-pulse"></span>
             {"티커 미매핑 종목 ("}{unmappedNames.length}{"건)"}
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2.5">
             {unmappedNames.map((u) => (
-              <div key={u.name} className="flex items-center gap-1.5">
-                <span className="text-xs text-secondary-foreground/70">{u.name}</span>
+              <div key={u.name} className="flex items-center gap-2 bg-muted/30 rounded-xl px-3 py-2 hover:bg-muted/50 transition-all duration-300">
+                <span className="text-xs text-secondary-foreground font-medium">{u.name}</span>
                 <input
                   placeholder="티커"
                   value={u.ticker || ""}
                   onChange={(e) => setUnmappedNames((p) => p.map((x) => x.name === u.name ? { ...x, ticker: e.target.value } : x))}
-                  className="bg-muted border border-input rounded-md px-2 py-0.5 text-card-foreground text-[11px] w-24 focus:border-primary/50 transition-colors"
+                  className="bg-muted/70 border-2 border-input rounded-lg px-2.5 py-1 text-card-foreground text-xs w-28 focus:border-primary/50 transition-all duration-300"
                 />
                 <button
-                  className="flex items-center gap-1 bg-[#0d2818] border border-[#166534] rounded-md px-2 py-0.5 text-primary text-[10px] hover:bg-[#145224] transition-colors"
+                  className="flex items-center gap-1.5 bg-gradient-to-r from-primary/20 to-accent/20 border border-primary/30 rounded-lg px-2.5 py-1 text-primary text-[10px] font-semibold hover:from-primary/30 hover:to-accent/30 hover:scale-105 transition-all duration-300"
                   onClick={() => applyTickerMap(u.name, u.ticker)}
                 >
-                  <Check className="w-3 h-3" />
+                  <Check className="w-3.5 h-3.5" />
                   적용
                 </button>
               </div>
@@ -434,50 +442,59 @@ export default function DashboardApp() {
         </div>
       )}
       {pasteMsg && (
-        <div className={`mx-5 mt-1.5 rounded-lg px-3.5 py-2 text-[11px] border ${
+        <div className={`mx-6 mt-2 rounded-xl px-4 py-3 text-xs border-2 shadow-md animate-scale-in font-medium ${
           pasteMsg.includes("완료")
-            ? "bg-[#0d1f12] border-[#166534] text-primary"
-            : "bg-[#1f0d0d] border-[#7f1d1d] text-negative"
+            ? "bg-gradient-to-r from-[#0d1f12] to-[#0d1812] border-primary text-primary"
+            : "bg-gradient-to-r from-[#1f0d0d] to-[#1a0d0d] border-[#7f1d1d] text-negative"
         }`}>
-          {pasteMsg}
+          <div className="flex items-center gap-2">
+            <span className={`w-1.5 h-1.5 rounded-full ${pasteMsg.includes("완료") ? "bg-primary" : "bg-negative"} animate-pulse`}></span>
+            {pasteMsg}
+          </div>
         </div>
       )}
 
-      <main className="p-5 overflow-x-hidden">
+      <main className="p-6 overflow-x-hidden max-w-[1800px] mx-auto">
 
         {/* ========== DASHBOARD ========== */}
         {activeTab === 0 && (
-          <div className="flex flex-col gap-4">
-            <div className="grid grid-cols-4 gap-3">
+          <div className="flex flex-col gap-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               {[
-                { label: "총 평가금액", value: `\u20A9${fmt(totalMarketValue)}` },
-                { label: "총 매입금액", value: `\u20A9${fmt(totalCost)}` },
-                { label: "평가손익", value: `${totalUnrealizedPnL >= 0 ? "+" : ""}\u20A9${fmt(totalUnrealizedPnL)}`, sub: fmtPct(totalCost > 0 ? totalUnrealizedPnL / totalCost : 0), c: pnlColor(totalUnrealizedPnL) },
-                { label: "실현손익 누계", value: `${totalRealizedPnL >= 0 ? "+" : ""}\u20A9${fmt(totalRealizedPnL)}`, c: pnlColor(totalRealizedPnL) },
-              ].map(({ label, value, sub, c }) => (
-                <div key={label} className="bg-card rounded-[14px] p-4 border border-border hover:border-input transition-colors">
-                  <div className="text-[10px] text-muted-foreground mb-2">{label}</div>
-                  <div className="text-lg font-bold break-all font-mono" style={{ color: c || "#e8e8e8" }}>{value}</div>
-                  {sub && <div className="text-[11px] mt-1 font-mono" style={{ color: c }}>{sub}</div>}
+                { label: "총 평가금액", value: `₩${fmt(totalMarketValue)}`, icon: "💰" },
+                { label: "총 매입금액", value: `₩${fmt(totalCost)}`, icon: "📊" },
+                { label: "평가손익", value: `${totalUnrealizedPnL >= 0 ? "+" : ""}₩${fmt(totalUnrealizedPnL)}`, sub: fmtPct(totalCost > 0 ? totalUnrealizedPnL / totalCost : 0), c: pnlColor(totalUnrealizedPnL), icon: "📈" },
+                { label: "실현손익 누계", value: `${totalRealizedPnL >= 0 ? "+" : ""}₩${fmt(totalRealizedPnL)}`, c: pnlColor(totalRealizedPnL), icon: "💵" },
+              ].map(({ label, value, sub, c, icon }, idx) => (
+                <div key={label} className="bg-gradient-to-br from-card to-card/50 rounded-2xl p-5 border border-border/50 hover:border-primary/30 transition-all duration-300 card-hover shadow-md hover:shadow-lg animate-fade-in" style={{ animationDelay: `${idx * 100}ms` }}>
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="text-[10px] text-muted-foreground tracking-wider uppercase font-semibold">{label}</div>
+                    <span className="text-2xl opacity-50">{icon}</span>
+                  </div>
+                  <div className="text-xl font-bold break-all font-mono transition-colors duration-300" style={{ color: c || "#e8e8e8" }}>{value}</div>
+                  {sub && <div className="text-xs mt-2 font-mono font-semibold" style={{ color: c }}>{sub}</div>}
                 </div>
               ))}
             </div>
-            <div className="grid grid-cols-[1fr_280px] gap-4">
-              <div className="bg-card rounded-[14px] p-4 border border-border min-w-0">
-                <div className="text-[10px] text-muted-foreground mb-3 tracking-wider uppercase">보유 종목</div>
+            <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-5">
+              <div className="bg-gradient-to-br from-card via-card to-muted/30 rounded-2xl p-5 border border-border/50 shadow-lg min-w-0 animate-scale-in">
+                <div className="text-[10px] text-muted-foreground mb-4 tracking-wider uppercase font-semibold flex items-center gap-2">
+                  <span className="w-1 h-4 bg-primary rounded-full"></span>
+                  보유 종목
+                </div>
                 <div className="overflow-x-auto">
                   <table className="w-full border-collapse text-xs">
                     <thead>
                       <tr className="text-muted-foreground text-[10px]">
                         {["종목", "수량", "평균단가", "평가금액", "손익", "수익률"].map((h) => (
-                          <th key={h} className="px-2 py-1.5 text-right font-normal whitespace-nowrap">{h}</th>
+                          <th key={h} className="px-3 py-2.5 text-right font-semibold whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
                       {activeHoldings
                         .sort((a, b) => (currentPrices[b.ticker] || b.avgCost) * b.qty - (currentPrices[a.ticker] || a.avgCost) * a.qty)
-                        .map((h) => {
+                        .map((h, idx) => {
                           const price = currentPrices[h.ticker] || h.avgCost;
                           const mv = h.qty * price;
                           const pnl = mv - h.totalCost;
@@ -485,46 +502,50 @@ export default function DashboardApp() {
                           return (
                             <tr
                               key={h.ticker}
-                              className="border-t border-border hover:bg-secondary/50 cursor-pointer transition-colors"
+                              className="border-t border-border/30 hover:bg-primary/5 cursor-pointer transition-all duration-300 animate-fade-in"
+                              style={{ animationDelay: `${idx * 30}ms` }}
                               onClick={() => { setSelectedTicker(h.ticker); setActiveTab(2); setTickerSearch(""); setTickerPage(0); }}
                             >
-                              <td className="px-2 py-2.5">
+                              <td className="px-3 py-3">
                                 <div className="font-semibold text-card-foreground text-xs">{displayName(h)}</div>
-                                <div className="text-[10px] text-muted-foreground">{/^\d{5,6}$/.test(h.ticker) ? h.ticker : h.name}</div>
+                                <div className="text-[10px] text-muted-foreground mt-0.5">{/^\d{5,6}$/.test(h.ticker) ? h.ticker : h.name}</div>
                               </td>
-                              <td className="px-2 py-2.5 text-right tabular-nums">{fmt(h.qty)}</td>
-                              <td className="px-2 py-2.5 text-right tabular-nums">{h.currency === "USD" ? "$" : "\u20A9"}{fmt(h.avgCost, 1)}</td>
-                              <td className="px-2 py-2.5 text-right text-card-foreground tabular-nums">{"\u20A9"}{fmt(mv)}</td>
-                              <td className="px-2 py-2.5 text-right tabular-nums" style={{ color: pnlColor(pnl) }}>{pnl >= 0 ? "+" : ""}{"\u20A9"}{fmt(pnl)}</td>
-                              <td className="px-2 py-2.5 text-right tabular-nums" style={{ color: pnlColor(pnlPctVal) }}>{fmtPct(pnlPctVal)}</td>
+                              <td className="px-3 py-3 text-right tabular-nums font-medium">{fmt(h.qty)}</td>
+                              <td className="px-3 py-3 text-right tabular-nums text-muted-foreground">{h.currency === "USD" ? "$" : "₩"}{fmt(h.avgCost, 1)}</td>
+                              <td className="px-3 py-3 text-right text-card-foreground tabular-nums font-semibold">{"₩"}{fmt(mv)}</td>
+                              <td className="px-3 py-3 text-right tabular-nums font-semibold" style={{ color: pnlColor(pnl) }}>{pnl >= 0 ? "+" : ""}{"₩"}{fmt(pnl)}</td>
+                              <td className="px-3 py-3 text-right tabular-nums font-bold" style={{ color: pnlColor(pnlPctVal) }}>{fmtPct(pnlPctVal)}</td>
                             </tr>
                           );
                         })}
                     </tbody>
                   </table>
                   {!activeHoldings.length && (
-                    <div className="px-5 py-10 text-center">
-                      <FileSpreadsheet className="w-8 h-8 mx-auto mb-3 text-muted-foreground/30" />
-                      <div className="text-sm text-muted-foreground mb-2">아직 거래 내역이 없습니다</div>
-                      <div className="text-[11px] text-muted-foreground/50 leading-relaxed">
-                        {"우측 "}<span className="text-primary">데이터 입력</span>{" 패널에서"}<br />
+                    <div className="px-5 py-12 text-center">
+                      <FileSpreadsheet className="w-10 h-10 mx-auto mb-4 text-muted-foreground/30 animate-pulse" />
+                      <div className="text-sm text-muted-foreground mb-2 font-medium">아직 거래 내역이 없습니다</div>
+                      <div className="text-xs text-muted-foreground/60 leading-relaxed">
+                        {"우측 "}<span className="text-primary font-semibold">데이터 입력</span>{" 패널에서"}<br />
                         {"HTS 화면을 복사/붙여넣기 하거나 파일을 드롭하세요"}
                       </div>
                     </div>
                   )}
                 </div>
               </div>
-              <div className="flex flex-col gap-3.5">
-                <div className="bg-card rounded-[14px] p-4 border border-border">
-                  <div className="text-[10px] text-muted-foreground mb-2.5 tracking-wider uppercase">자산 배분</div>
-                  <div className="flex items-center gap-3">
-                    <DonutChart segments={assetClassBreakdown} size={84} />
-                    <div className="flex flex-col gap-1">
+              <div className="flex flex-col gap-4">
+                <div className="bg-gradient-to-br from-card via-card/90 to-muted/30 rounded-2xl p-5 border border-border/50 shadow-lg animate-slide-in-right" style={{ animationDelay: "200ms" }}>
+                  <div className="text-[10px] text-muted-foreground mb-3 tracking-wider uppercase font-semibold flex items-center gap-2">
+                    <span className="w-1 h-4 bg-accent rounded-full"></span>
+                    자산 배분
+                  </div>
+                  <div className="flex items-center gap-4 mb-3">
+                    <DonutChart segments={assetClassBreakdown} size={96} />
+                    <div className="flex flex-col gap-1.5">
                       {assetClassBreakdown.map(({ label, value, color }) => (
-                        <div key={label} className="flex items-center gap-1.5 text-[11px]">
-                          <div className="w-2 h-2 rounded-sm shrink-0" style={{ background: color }} />
-                          <span className="text-muted-foreground/80">{label}</span>
-                          <span className="text-card-foreground ml-auto tabular-nums">
+                        <div key={label} className="flex items-center gap-2 text-xs hover:scale-105 transition-transform duration-200">
+                          <div className="w-2.5 h-2.5 rounded-full shrink-0 shadow-md" style={{ background: color }} />
+                          <span className="text-muted-foreground/90 font-medium">{label}</span>
+                          <span className="text-card-foreground ml-auto tabular-nums font-semibold">
                             {totalMarketValue > 0 ? `${((value / totalMarketValue) * 100).toFixed(1)}%` : "-"}
                           </span>
                         </div>
@@ -532,38 +553,41 @@ export default function DashboardApp() {
                     </div>
                   </div>
                 </div>
-                <div className="bg-card rounded-[14px] p-4 border border-border">
-                  <div className="text-[10px] text-muted-foreground mb-2.5 tracking-wider uppercase">데이터 입력</div>
-                  <label className="flex flex-col gap-1 mb-2">
-                    <span className="text-[10px] text-muted-foreground">계좌명 (선택)</span>
+                <div className="glass-card rounded-2xl p-5 shadow-lg animate-slide-in-right" style={{ animationDelay: "300ms" }}>
+                  <div className="text-[10px] text-muted-foreground mb-3 tracking-wider uppercase font-semibold flex items-center gap-2">
+                    <span className="w-1 h-4 bg-primary rounded-full"></span>
+                    데이터 입력
+                  </div>
+                  <label className="flex flex-col gap-2 mb-3">
+                    <span className="text-[10px] text-muted-foreground font-medium">계좌명 (선택)</span>
                     <input
                       value={pendingAccount}
                       onChange={(e) => setPendingAccount(e.target.value)}
                       placeholder="예: MTS 위탁계좌"
-                      className="bg-muted border border-input rounded-md px-2 py-1.5 text-card-foreground text-[11px] focus:border-primary/50 transition-colors"
+                      className="bg-muted/70 border-2 border-input rounded-xl px-3 py-2 text-card-foreground text-xs focus:border-primary/50 focus:bg-muted transition-all duration-300"
                     />
                   </label>
                   <div
-                    className="border-2 border-dashed border-input rounded-xl p-4 text-center cursor-pointer transition-all hover:border-primary/50 hover:bg-primary/[0.02]"
-                    onDragOver={(e) => { e.preventDefault(); e.currentTarget.classList.add("border-primary", "bg-primary/[0.04]"); }}
-                    onDragLeave={(e) => { e.currentTarget.classList.remove("border-primary", "bg-primary/[0.04]"); }}
-                    onDrop={(e) => { e.currentTarget.classList.remove("border-primary", "bg-primary/[0.04]"); handleFileDrop(e); }}
+                    className="border-2 border-dashed border-input rounded-2xl p-5 text-center cursor-pointer transition-all duration-300 hover:border-primary/50 hover:bg-primary/[0.03] hover:scale-[1.02]"
+                    onDragOver={(e) => { e.preventDefault(); e.currentTarget.classList.add("border-primary", "bg-primary/[0.06]", "scale-[1.02]"); }}
+                    onDragLeave={(e) => { e.currentTarget.classList.remove("border-primary", "bg-primary/[0.06]", "scale-[1.02]"); }}
+                    onDrop={(e) => { e.currentTarget.classList.remove("border-primary", "bg-primary/[0.06]", "scale-[1.02]"); handleFileDrop(e); }}
                     onClick={() => fileInputRef.current?.click()}
                   >
-                    <Upload className="w-5 h-5 mx-auto mb-1 text-muted-foreground/50" />
-                    <div className="text-[10px] text-muted-foreground">xlsx / csv / tsv 드롭</div>
+                    <Upload className="w-6 h-6 mx-auto mb-2 text-muted-foreground/50" />
+                    <div className="text-[10px] text-muted-foreground font-medium">xlsx / csv / tsv 드롭</div>
                   </div>
                   <textarea
                     value={pasteText}
                     onChange={(e) => setPasteText(e.target.value)}
                     placeholder={"HTS Ctrl+C 후 붙여넣기\n(TSV / CSV 모두 지원)"}
-                    className="mt-2 w-full h-[70px] bg-muted border border-border rounded-lg p-2 text-foreground text-[11px] resize-y focus:border-primary/50 transition-colors"
+                    className="mt-3 w-full h-[80px] bg-muted/70 border-2 border-border rounded-xl p-3 text-foreground text-xs resize-y focus:border-primary/50 focus:bg-muted transition-all duration-300"
                   />
                   <button
-                    className="mt-2 w-full flex items-center justify-center gap-1.5 bg-[#0d2818] border border-[#166534] rounded-lg px-3 py-2 text-primary text-xs hover:bg-[#145224] transition-colors"
+                    className="mt-3 w-full flex items-center justify-center gap-2 bg-gradient-to-r from-primary/20 to-accent/20 border-2 border-primary/30 rounded-xl px-4 py-2.5 text-primary text-xs font-semibold hover:from-primary/30 hover:to-accent/30 hover:border-primary/50 hover:scale-[1.02] transition-all duration-300 shadow-md"
                     onClick={handlePaste}
                   >
-                    <ClipboardPaste className="w-3.5 h-3.5" />
+                    <ClipboardPaste className="w-4 h-4" />
                     파싱 및 적용
                   </button>
                 </div>
@@ -1091,44 +1115,54 @@ export default function DashboardApp() {
 
         {/* ========== RETIREMENT ========== */}
         {activeTab === 5 && (
-          <div className="grid grid-cols-2 gap-4">
-            <div className="bg-card rounded-[14px] p-4 border border-border col-span-2">
-              <div className="text-[10px] text-muted-foreground mb-3.5 tracking-wider uppercase">생애 재무 / 은퇴 시뮬레이션</div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            <div className="bg-card rounded-2xl p-5 border border-border shadow-lg col-span-1 lg:col-span-2">
+              <div className="text-[10px] text-muted-foreground mb-4 tracking-wider uppercase font-semibold flex items-center gap-2">
+                <span className="w-1 h-4 bg-primary rounded-full"></span>
+                생애 재무 / 은퇴 시뮬레이션
+              </div>
               <RetirementPlanner totalPortfolioValue={totalMarketValue} />
             </div>
-            <div className="bg-card rounded-[14px] p-4 border border-border">
-              <div className="text-[10px] text-muted-foreground mb-3.5 tracking-wider uppercase">포트폴리오 수익률 TOP 5</div>
+            <div className="bg-card rounded-2xl p-5 border border-border shadow-lg">
+              <div className="text-[10px] text-muted-foreground mb-4 tracking-wider uppercase font-semibold flex items-center gap-2">
+                <span className="w-1 h-4 bg-accent rounded-full"></span>
+                포트폴리오 수익률 TOP 5
+              </div>
               {allPortfolioStats.length === 0 && <div className="text-muted-foreground/50 text-xs">포트폴리오를 먼저 생성해 주세요</div>}
-              {allPortfolioStats.slice(0, 5).map((p) => (
+              {allPortfolioStats.slice(0, 5).map((p, idx) => (
                 <div
                   key={p.id}
                   onClick={() => { setActivePortfolioId(p.id); setActiveTab(3); }}
-                  className="flex items-center gap-2.5 bg-muted rounded-[9px] px-3 py-2.5 mb-2 cursor-pointer border border-transparent hover:border-input transition-all"
+                  className="flex items-center gap-3 bg-muted/50 rounded-xl px-4 py-3 mb-2.5 cursor-pointer border border-transparent hover:border-primary/30 transition-all duration-300 card-hover animate-fade-in"
+                  style={{ animationDelay: `${idx * 100}ms` }}
                 >
                   <div className="flex-1 min-w-0">
-                    <div className="text-[13px] font-semibold text-card-foreground truncate">{p.name}</div>
-                    <div className="text-[10px] text-muted-foreground mt-0.5">{p.tickers.length}{"종목 \u00B7 CAGR "}{fmtPct(p.cagr)}</div>
+                    <div className="text-sm font-semibold text-card-foreground truncate">{p.name}</div>
+                    <div className="text-[10px] text-muted-foreground mt-1">{p.tickers.length}{"종목 · CAGR "}{fmtPct(p.cagr)}</div>
                   </div>
                   <div className="shrink-0">
-                    <div className="w-20 h-1.5 bg-secondary rounded-sm overflow-hidden mb-1">
-                      <div className="h-full rounded-sm" style={{ width: `${Math.min(100, Math.abs(p.pnlPct) * 150)}%`, background: pnlColor(p.pnlPct) }} />
+                    <div className="w-24 h-2 bg-secondary rounded-full overflow-hidden mb-1.5">
+                      <div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(100, Math.abs(p.pnlPct) * 150)}%`, background: pnlColor(p.pnlPct) }} />
                     </div>
-                    <div className="text-[13px] font-bold text-right tabular-nums" style={{ color: pnlColor(p.pnlPct) }}>{fmtPct(p.pnlPct)}</div>
+                    <div className="text-sm font-bold text-right tabular-nums" style={{ color: pnlColor(p.pnlPct) }}>{fmtPct(p.pnlPct)}</div>
                   </div>
                 </div>
               ))}
             </div>
-            <div className="bg-card rounded-[14px] p-4 border border-border">
-              <div className="text-[10px] text-muted-foreground mb-3 tracking-wider uppercase">운영 안내</div>
-              <div className="flex flex-col gap-2 text-xs text-muted-foreground/80 leading-relaxed">
+            <div className="bg-gradient-to-br from-card via-card/90 to-muted/30 rounded-2xl p-5 border border-border shadow-lg">
+              <div className="text-[10px] text-muted-foreground mb-4 tracking-wider uppercase font-semibold flex items-center gap-2">
+                <span className="w-1 h-4 bg-warning rounded-full"></span>
+                운영 안내
+              </div>
+              <div className="flex flex-col gap-2.5 text-xs text-muted-foreground/80 leading-relaxed">
                 {[
                   { label: "4% 인출 규칙", text: "은퇴 자산의 연 4%를 인출해도 30년 이상 유지 (Trinity Study)", color: "#4ade80" },
                   { label: "물가상승률 2.5%", text: "목표 인출액 실질 가치 환산 후 목표 자산 역산", color: "#fbbf24" },
                   { label: "CAGR 7% 초과 경고", text: "공격적 자산 배분 또는 납입액 증가 검토 권고", color: "#f87171" },
                   { label: "로컬 저장", text: "모든 데이터 IndexedDB 저장, 외부 서버 전송 없음", color: "#60a5fa" },
-                ].map(({ label, text, color }) => (
-                  <div key={label} className="bg-muted rounded-lg px-3 py-2.5">
-                    <span style={{ color }}>{label}</span>{": "}{text}
+                ].map(({ label, text, color }, idx) => (
+                  <div key={label} className="bg-muted/50 rounded-xl px-4 py-3 hover:bg-muted transition-all duration-300 animate-fade-in" style={{ animationDelay: `${idx * 100}ms` }}>
+                    <span className="font-semibold" style={{ color }}>{label}</span>{": "}{text}
                   </div>
                 ))}
               </div>
