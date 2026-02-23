@@ -170,55 +170,80 @@ function deduplicateTransactions(txs: Partial<Transaction>[]): Partial<Transacti
 }
 
 export function processRawData(
-  headers: string[],
-  rows: unknown[][],
+  rawRows: unknown[][],
   tickerMapCache: Record<string, string>,
   accountLabel: string
 ): { txs: Transaction[]; unmapped: UnmappedName[] } {
-  const colMap = mapColumns(headers);
+  let bestIdx = 0;
+  let maxMatches = 0;
+  let colMap: Record<string, number> = {};
+
+  const limit = Math.min(rawRows.length, 10);
+  for (let i = 0; i < limit; i++) {
+    const row = rawRows[i];
+    if (!Array.isArray(row)) continue;
+    const headers = row.map(String);
+    const map = mapColumns(headers);
+    const matchCount = Object.keys(map).length;
+
+    if (matchCount > maxMatches) {
+      maxMatches = matchCount;
+      bestIdx = i;
+      colMap = map;
+    }
+  }
+
   const unmapped: UnmappedName[] = [];
-  let txs = rowsToTransactions(rows, colMap, unmapped, accountLabel);
+  
+  if (maxMatches === 0) {
+    return { txs: [], unmapped };
+  }
+
+  const dataRows = rawRows.slice(bestIdx + 1);
+  let txs = rowsToTransactions(dataRows, colMap, unmapped, accountLabel);
+
   txs = txs.map((tx) => {
     if (!tx.ticker && tx.name && tickerMapCache[tx.name!])
       return { ...tx, ticker: tickerMapCache[tx.name!] };
     return tx;
   });
+  
   txs = deduplicateTransactions(txs);
   txs = txs.map((tx, i) => ({
     ...tx,
     id: Date.now() + i,
     assetClass: detectAssetClass(tx as { name?: string; ticker?: string; currency?: string }),
   }));
+  
   return { txs: txs as Transaction[], unmapped };
 }
 
-export function parseTSV(text: string): { headers: string[]; rows: string[][] } | null {
+export function parseTSV(text: string): { rows: string[][] } | null {
   const lines = text.trim().split(/\r?\n/);
-  if (lines.length < 2) return null;
+  if (lines.length < 1) return null;
   const firstLine = lines[0];
   const sep = firstLine.includes("\t") ? "\t" : firstLine.includes(",") ? "," : null;
   if (!sep) return null;
   return {
-    headers: firstLine.split(sep),
-    rows: lines.slice(1).map((l) => l.split(sep)),
+    rows: lines.map((l) => l.split(sep)),
   };
 }
 
 export function parseExcelFile(
   file: File
-): Promise<{ headers: string[]; rows: unknown[][] }> {
+): Promise<{ rows: unknown[][] }> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
         const wb = XLSX.read(e.target?.result, { type: "array" });
         const ws = wb.Sheets[wb.SheetNames[0]];
-        const data = XLSX.utils.sheet_to_json(ws, { header: 1 }) as unknown[][];
-        if (data.length < 2) {
+        const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" }) as unknown[][];
+        if (data.length < 1) {
           reject("Empty sheet");
           return;
         }
-        resolve({ headers: data[0].map(String), rows: data.slice(1) });
+        resolve({ rows: data });
       } catch (err) {
         reject(err);
       }

@@ -39,7 +39,7 @@ function MacroWeatherWidget({ activeIndicators }: { activeIndicators: typeof ALL
         <div>
           <div className="text-[26px] font-bold text-card-foreground mb-1">{WEATHER_LABELS[wx]}</div>
           <div className="text-xs text-muted-foreground">
-            {"종합 Z점수: "}{compositeZ.toFixed(2)}{" · "}{activeIndicators.length}{"개 지표"}
+            {"종합 Z점수: "}{compositeZ.toFixed(2)}{" \u00B7 "}{activeIndicators.length}{"개 지표"}
           </div>
         </div>
       </div>
@@ -148,7 +148,7 @@ function RetirementPlanner({ totalPortfolioValue }: { totalPortfolioValue: numbe
             </div>
           </div>
           <div className="text-[10px] text-muted-foreground/80 mt-3 text-center">
-            {"※ 물가상승률 "}{(params.inflationRate * 100).toFixed(1)}{"% 가정 / 4% 인출 규칙"}
+            {"\u203B 물가상승률 "}{(params.inflationRate * 100).toFixed(1)}{"% 가정 / 4% 인출 규칙"}
           </div>
         </div>
       )}
@@ -244,8 +244,15 @@ export default function DashboardApp() {
 
   const activePortfolioStats = useMemo(() => allPortfolioStats.find((p) => p.id === activePortfolioId) || null, [allPortfolioStats, activePortfolioId]);
 
-  const processData = useCallback((headers: string[], rows: unknown[][], acct: string) => {
-    const { txs, unmapped } = processRawData(headers, rows, tickerMap, acct);
+  const processData = useCallback((rawRows: unknown[][], acct: string) => {
+    const { txs, unmapped } = processRawData(rawRows, tickerMap, acct);
+    
+    if (txs.length === 0) {
+      setPasteMsg("업로드 실패: 데이터 형식을 인식할 수 없습니다. (헤더명 불일치)");
+      setTimeout(() => setPasteMsg(""), 4000);
+      return;
+    }
+
     setUnmappedNames((prev) => {
       const ex = new Set(prev.map((u) => u.name));
       return [...prev, ...unmapped.filter((u) => !ex.has(u.name))];
@@ -263,23 +270,31 @@ export default function DashboardApp() {
     const text = pasteText.trim();
     if (!text) return;
     const parsed = parseTSV(text);
-    if (parsed) { processData(parsed.headers, parsed.rows, pendingAccount || "붙여넣기"); setPasteText(""); }
-    else setPasteMsg("파싱 실패: 헤더 포함 TSV/CSV를 붙여넣어 주세요.");
+    if (parsed) { 
+      processData(parsed.rows, pendingAccount || "붙여넣기"); 
+      setPasteText(""); 
+    }
+    else setPasteMsg("파싱 실패: 데이터를 인식할 수 없습니다.");
   }, [pasteText, pendingAccount, processData]);
 
   const handleFileDrop = useCallback(async (e: React.DragEvent | React.ChangeEvent<HTMLInputElement>) => {
     e.preventDefault();
     const file = ('dataTransfer' in e ? e.dataTransfer?.files?.[0] : (e.target as HTMLInputElement)?.files?.[0]);
     if (!file) return;
+
+    if ('target' in e && e.target instanceof HTMLInputElement) {
+      e.target.value = '';
+    }
+
     const acct = pendingAccount || file.name.replace(/\.[^.]+$/, "");
     try {
       if (file.name.match(/\.(xlsx|xls)$/i)) {
         const d = await parseExcelFile(file);
-        processData(d.headers, d.rows as unknown[][], acct);
+        processData(d.rows, acct);
       } else {
         const text = await file.text();
         const p = parseTSV(text);
-        if (p) processData(p.headers, p.rows, acct);
+        if (p) processData(p.rows, acct);
         else setPasteMsg("파일 파싱 실패");
       }
     } catch (err) {
@@ -461,10 +476,10 @@ export default function DashboardApp() {
           <div className="flex flex-col gap-5">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               {[
-                { label: "총 평가금액", value: `₩${fmt(totalMarketValue)}`, icon: "💰" },
-                { label: "총 매입금액", value: `₩${fmt(totalCost)}`, icon: "📊" },
-                { label: "평가손익", value: `${totalUnrealizedPnL >= 0 ? "+" : ""}₩${fmt(totalUnrealizedPnL)}`, sub: fmtPct(totalCost > 0 ? totalUnrealizedPnL / totalCost : 0), c: pnlColor(totalUnrealizedPnL), icon: "📈" },
-                { label: "실현손익 누계", value: `${totalRealizedPnL >= 0 ? "+" : ""}₩${fmt(totalRealizedPnL)}`, c: pnlColor(totalRealizedPnL), icon: "💵" },
+                { label: "총 평가금액", value: `\u20A9${fmt(totalMarketValue)}`, icon: "💰" },
+                { label: "총 매입금액", value: `\u20A9${fmt(totalCost)}`, icon: "📊" },
+                { label: "평가손익", value: `${totalUnrealizedPnL >= 0 ? "+" : ""}\u20A9${fmt(totalUnrealizedPnL)}`, sub: fmtPct(totalCost > 0 ? totalUnrealizedPnL / totalCost : 0), c: pnlColor(totalUnrealizedPnL), icon: "📈" },
+                { label: "실현손익 누계", value: `${totalRealizedPnL >= 0 ? "+" : ""}\u20A9${fmt(totalRealizedPnL)}`, c: pnlColor(totalRealizedPnL), icon: "💵" },
               ].map(({ label, value, sub, c, icon }, idx) => (
                 <div key={label} className="bg-gradient-to-br from-card to-card/50 rounded-2xl p-5 border border-border/50 hover:border-primary/30 transition-all duration-300 card-hover shadow-md hover:shadow-lg animate-fade-in" style={{ animationDelay: `${idx * 100}ms` }}>
                   <div className="flex items-center justify-between mb-3">
@@ -511,9 +526,9 @@ export default function DashboardApp() {
                                 <div className="text-[10px] text-muted-foreground mt-0.5">{/^\d{5,6}$/.test(h.ticker) ? h.ticker : h.name}</div>
                               </td>
                               <td className="px-3 py-3 text-right tabular-nums font-medium">{fmt(h.qty)}</td>
-                              <td className="px-3 py-3 text-right tabular-nums text-muted-foreground">{h.currency === "USD" ? "$" : "₩"}{fmt(h.avgCost, 1)}</td>
-                              <td className="px-3 py-3 text-right text-card-foreground tabular-nums font-semibold">{"₩"}{fmt(mv)}</td>
-                              <td className="px-3 py-3 text-right tabular-nums font-semibold" style={{ color: pnlColor(pnl) }}>{pnl >= 0 ? "+" : ""}{"₩"}{fmt(pnl)}</td>
+                              <td className="px-3 py-3 text-right tabular-nums text-muted-foreground">{h.currency === "USD" ? "$" : "\u20A9"}{fmt(h.avgCost, 1)}</td>
+                              <td className="px-3 py-3 text-right text-card-foreground tabular-nums font-semibold">{"\u20A9"}{fmt(mv)}</td>
+                              <td className="px-3 py-3 text-right tabular-nums font-semibold" style={{ color: pnlColor(pnl) }}>{pnl >= 0 ? "+" : ""}{"\u20A9"}{fmt(pnl)}</td>
                               <td className="px-3 py-3 text-right tabular-nums font-bold" style={{ color: pnlColor(pnlPctVal) }}>{fmtPct(pnlPctVal)}</td>
                             </tr>
                           );
@@ -1107,7 +1122,7 @@ export default function DashboardApp() {
                     value: calcZScore(m.value, m.mean, m.stddev) * (m.positiveIsGood ? 1 : -1) * m.weight,
                   }))}
                 />
-                <div className="text-[10px] text-muted-foreground/50 mt-2.5">{"※ 양수(초록) = 시장에 호재 방향. 가중치 적용 Z점수."}</div>
+                <div className="text-[10px] text-muted-foreground/50 mt-2.5">{"\u203B 양수(초록) = 시장에 호재 방향. 가중치 적용 Z점수."}</div>
               </div>
             )}
           </div>
@@ -1138,7 +1153,7 @@ export default function DashboardApp() {
                 >
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-semibold text-card-foreground truncate">{p.name}</div>
-                    <div className="text-[10px] text-muted-foreground mt-1">{p.tickers.length}{"종목 · CAGR "}{fmtPct(p.cagr)}</div>
+                    <div className="text-[10px] text-muted-foreground mt-1">{p.tickers.length}{"종목 \u00B7 CAGR "}{fmtPct(p.cagr)}</div>
                   </div>
                   <div className="shrink-0">
                     <div className="w-24 h-2 bg-secondary rounded-full overflow-hidden mb-1.5">
