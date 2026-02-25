@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { HorizBarChart, LineChart, DonutChart } from "./charts";
+import { HorizBarChart, LineChart, DonutChart, RetirementChart } from "./charts";
 import { dbGetAll, dbPutAll, dbDelete, dbClear } from "@/lib/db";
 import { processRawData, parseTSV, parseExcelFile } from "@/lib/parsing";
 import { buildHoldings, calcZScore, weatherFromZScore, simulateRetirement, displayName, pnlColor, fmt, fmtPct, fmtWon } from "@/lib/accounting";
@@ -74,80 +74,255 @@ function MacroWeatherWidget({ activeIndicators }: { activeIndicators: typeof ALL
 // ============================================================
 // RETIREMENT PLANNER
 // ============================================================
+function SliderRow({
+  label, value, min, max, step, unit, display,
+  onChange,
+}: {
+  label: string; value: number; min: number; max: number; step: number;
+  unit?: string; display?: string; onChange: (v: number) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="text-[11px] font-medium text-card-foreground/70">{label}</div>
+      <div className="flex items-center justify-end gap-1.5">
+        <span className="text-sm font-semibold tabular-nums text-card-foreground">{display ?? value.toLocaleString("ko-KR")}</span>
+        {unit && <span className="text-xs text-muted-foreground">{unit}</span>}
+      </div>
+      <input
+        type="range"
+        min={min} max={max} step={step} value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="w-full h-1.5 rounded-full appearance-none cursor-pointer"
+        style={{
+          background: `linear-gradient(to right, #4ade80 0%, #4ade80 ${((value - min) / (max - min)) * 100}%, #2a2f3e ${((value - min) / (max - min)) * 100}%, #2a2f3e 100%)`,
+          accentColor: "#4ade80",
+        }}
+      />
+    </div>
+  );
+}
+
 function RetirementPlanner({ totalPortfolioValue }: { totalPortfolioValue: number }) {
   const currentYear = new Date().getFullYear();
   const [params, setParams] = useState({
-    currentAssets: totalPortfolioValue || 50000000,
-    annualContribution: 12000000,
-    retirementYear: currentYear + 25,
-    targetWithdrawal: 36000000,
+    birthYear: 1998,
+    currentAssets: Math.round((totalPortfolioValue || 100000000) / 10000), // 만원
+    monthlySaving: 350,
+    savingIncreaseEveryN: 5,
+    savingIncreaseAmount: 50,
+    retirementYear: 2050,
+    monthlyExpense: 500,
+    growthRateBefore: 0.08,
+    growthRateAfter: 0.04,
     inflationRate: 0.025,
   });
-  const [result, setResult] = useState<ReturnType<typeof simulateRetirement>>(null);
+
+  const set = (k: keyof typeof params, v: number) => setParams((p) => ({ ...p, [k]: v }));
 
   useEffect(() => {
-    setResult(simulateRetirement({ ...params, currentYear }));
-  }, [params, currentYear]);
-
-  useEffect(() => {
-    if (totalPortfolioValue) setParams((p) => ({ ...p, currentAssets: totalPortfolioValue }));
+    if (totalPortfolioValue > 0)
+      setParams((p) => ({ ...p, currentAssets: Math.max(p.currentAssets, Math.round(totalPortfolioValue / 10000)) }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [totalPortfolioValue]);
 
-  const set = (k: string, v: number) => setParams((p) => ({ ...p, [k]: v }));
+  const result = useMemo(() => simulateRetirement({ ...params, currentYear }), [params, currentYear]);
+
+  const currentAge = currentYear - params.birthYear;
+  const retirementAge = params.retirementYear - params.birthYear;
+
+  const saveJSON = () => {
+    const blob = new Blob([JSON.stringify({ params, result: result ? { depletionYear: result.depletionYear, isSafe: result.isSafe } : null }, null, 2)], { type: "application/json" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "retirement_plan.json"; a.click();
+  };
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="grid grid-cols-2 gap-3">
-        {([
-          ["현재 자산 (원)", "currentAssets"],
-          ["연간 납입액 (원)", "annualContribution"],
-          ["은퇴 목표 연도", "retirementYear"],
-          ["연간 목표 인출액 (원)", "targetWithdrawal"],
-        ] as const).map(([label, key]) => (
-          <label key={key} className="flex flex-col gap-1.5">
-            <span className="text-[10px] text-muted-foreground">{label}</span>
-            <input
-              type="number"
-              value={params[key]}
-              onChange={(e) => set(key, parseFloat(e.target.value) || 0)}
-              className="bg-muted border border-input rounded-lg px-3 py-2 text-card-foreground text-sm w-full focus:border-primary/50 transition-colors"
-            />
-          </label>
-        ))}
+    <div className="flex flex-col gap-0">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-5">
+        <h2 className="text-xl font-bold text-card-foreground tracking-tight">낙원계산기 Pro</h2>
+        <button
+          onClick={saveJSON}
+          className="flex items-center gap-2 bg-primary text-primary-foreground text-sm font-semibold px-4 py-2 rounded-xl hover:brightness-110 transition-all"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+          </svg>
+          저장하기
+        </button>
       </div>
-      {result && (
-        <div className="bg-muted rounded-[14px] p-4">
-          <div className="grid grid-cols-3 gap-3 mb-4">
-            {[
-              { label: "목표 필요 자산", value: fmtWon(result.targetFV) },
-              {
-                label: "필요 연평균 수익률(CAGR)",
-                value: `${(result.requiredCAGR * 100).toFixed(2)}%`,
-                color: result.requiredCAGR > 0.07 ? "#f87171" : "#4ade80",
-              },
-              {
-                label: "현재 달성률",
-                value: `${Math.min(100, (params.currentAssets / result.targetFV) * 100).toFixed(1)}%`,
-              },
-            ].map(({ label, value, color }) => (
-              <div key={label} className="bg-card rounded-xl p-3.5">
-                <div className="text-[10px] text-muted-foreground mb-1.5">{label}</div>
-                <div className="text-lg font-bold" style={{ color: color || "#4ade80" }}>
-                  {value}
+
+      <div className="grid grid-cols-2 gap-5">
+        {/* LEFT: inputs */}
+        <div className="bg-card border border-border rounded-2xl p-5 flex flex-col gap-5">
+          {/* 기본 정보 */}
+          <div>
+            <div className="text-[10px] font-semibold text-muted-foreground tracking-wider uppercase mb-3">기본 정보</div>
+            <SliderRow
+              label="출생 연도"
+              value={params.birthYear}
+              min={1960} max={2005} step={1}
+              unit={`년생 (만 ${currentAge}세)`}
+              display={String(params.birthYear)}
+              onChange={(v) => set("birthYear", v)}
+            />
+          </div>
+
+          {/* 자산 & 저축 */}
+          <div className="flex flex-col gap-4">
+            <div className="text-[10px] font-semibold text-muted-foreground tracking-wider uppercase">자산 {"&"} 저축</div>
+            <SliderRow
+              label="현재 모은 자산"
+              value={params.currentAssets}
+              min={0} max={200000} step={500}
+              unit="만원"
+              onChange={(v) => set("currentAssets", v)}
+            />
+            <SliderRow
+              label="매월 저축액"
+              value={params.monthlySaving}
+              min={0} max={2000} step={10}
+              unit="만원"
+              onChange={(v) => set("monthlySaving", v)}
+            />
+            {/* 저축 증액 플랜 */}
+            <div>
+              <div className="text-[11px] font-medium text-card-foreground/70 mb-2">저축 증액 플랜</div>
+              <div className="flex items-center gap-2">
+                <div className="flex-1 bg-muted border border-input rounded-lg px-3 py-2 flex items-end justify-center gap-1">
+                  <input
+                    type="number" min={1} max={20}
+                    value={params.savingIncreaseEveryN}
+                    onChange={(e) => set("savingIncreaseEveryN", Number(e.target.value) || 1)}
+                    className="bg-transparent text-card-foreground text-sm font-semibold w-12 text-center focus:outline-none tabular-nums"
+                  />
+                  <span className="text-[10px] text-muted-foreground pb-0.5">년 마다</span>
+                </div>
+                <span className="text-muted-foreground text-sm">+</span>
+                <div className="flex-1 bg-muted border border-input rounded-lg px-3 py-2 flex items-end justify-between gap-1">
+                  <input
+                    type="number" min={0} max={500} step={10}
+                    value={params.savingIncreaseAmount}
+                    onChange={(e) => set("savingIncreaseAmount", Number(e.target.value) || 0)}
+                    className="bg-transparent text-card-foreground text-sm font-semibold text-right w-full focus:outline-none tabular-nums"
+                  />
+                  <span className="text-[10px] text-muted-foreground pb-0.5 shrink-0">만원 증액</span>
                 </div>
               </div>
-            ))}
+            </div>
           </div>
-          <LineChart data={result.trajectory.map((t) => ({ value: t.value }))} height={100} />
-          <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
-            <span>{currentYear}{"년"}</span>
-            <span>{params.retirementYear}{"년"}</span>
+
+          {/* 은퇴 & 생활 */}
+          <div className="flex flex-col gap-4">
+            <div className="text-[10px] font-semibold text-muted-foreground tracking-wider uppercase">은퇴 {"&"} 생활</div>
+            <SliderRow
+              label="은퇴 목표 연도"
+              value={params.retirementYear}
+              min={currentYear + 1} max={2060} step={1}
+              unit={`년 (만 ${retirementAge}세)`}
+              display={String(params.retirementYear)}
+              onChange={(v) => set("retirementYear", v)}
+            />
+            <SliderRow
+              label="은퇴 후 월 생활비 (현재가치)"
+              value={params.monthlyExpense}
+              min={100} max={2000} step={50}
+              unit="만원"
+              onChange={(v) => set("monthlyExpense", v)}
+            />
           </div>
-          <div className="text-[10px] text-muted-foreground/70 mt-2">
-            {"※ 물가상승률 "}{(params.inflationRate * 100).toFixed(1)}{"% 가정 / 4% 인출 규칙"}
+
+          {/* 수익률 설정 */}
+          <div className="flex flex-col gap-3">
+            <div className="text-[10px] font-semibold text-muted-foreground tracking-wider uppercase">수익률 설정</div>
+            <div className="grid grid-cols-2 gap-2">
+              {([
+                ["은퇴 전 연 수익률", "growthRateBefore", 0.01, 0.20, 0.01],
+                ["은퇴 후 연 수익률", "growthRateAfter", 0.01, 0.12, 0.01],
+              ] as const).map(([label, key, min, max, step]) => (
+                <label key={key} className="flex flex-col gap-1">
+                  <span className="text-[10px] text-muted-foreground">{label}</span>
+                  <div className="bg-muted border border-input rounded-lg px-3 py-2 flex items-center justify-between">
+                    <input
+                      type="number" min={min * 100} max={max * 100} step={step * 100}
+                      value={(params[key] * 100).toFixed(1)}
+                      onChange={(e) => set(key, (parseFloat(e.target.value) || 0) / 100)}
+                      className="bg-transparent text-card-foreground text-sm font-semibold w-12 text-right focus:outline-none tabular-nums"
+                    />
+                    <span className="text-xs text-muted-foreground">%</span>
+                  </div>
+                </label>
+              ))}
+            </div>
           </div>
         </div>
-      )}
+
+        {/* RIGHT: results */}
+        <div className="bg-card border border-border rounded-2xl p-5 flex flex-col gap-4">
+          {result && (
+            <>
+              {/* Status badge */}
+              <div className="flex justify-center">
+                <div
+                  className="px-4 py-1.5 rounded-full text-sm font-semibold"
+                  style={{
+                    background: result.isSafe ? "rgba(74,222,128,0.15)" : "rgba(248,113,113,0.15)",
+                    color: result.isSafe ? "#4ade80" : "#f87171",
+                    border: `1px solid ${result.isSafe ? "rgba(74,222,128,0.3)" : "rgba(248,113,113,0.3)"}`,
+                  }}
+                >
+                  {result.isSafe ? "안전 (100세 이상)" : "위험 (자산 고갈)"}
+                </div>
+              </div>
+
+              {/* Depletion year display */}
+              <div className="text-center">
+                <div className="text-[11px] text-muted-foreground mb-1">자산 고갈 예상 시점</div>
+                <div
+                  className="text-6xl font-black tabular-nums leading-none mb-1"
+                  style={{ color: result.isSafe ? "#4ade80" : "#f87171" }}
+                >
+                  {result.isSafe ? (result.trajectory[result.trajectory.length - 1]?.year ?? "—") : result.depletionYear}{"년"}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {"(만 "}{result.isSafe ? "100+" : result.depletionAge}{"세 시점)"}
+                </div>
+              </div>
+
+              {/* Summary sentence */}
+              <div className="border-l-4 border-primary/60 pl-3 py-1">
+                <p className="text-xs text-card-foreground/80 leading-relaxed">
+                  {(params.retirementYear - currentYear)}{"년간 평균 "}
+                  <span className="font-semibold text-card-foreground">{Math.round(result.avgAnnualSaving / 12).toLocaleString("ko-KR")}{"만원씩"}</span>
+                  {" 저축하고, 매년 자산을 "}
+                  <span className="font-semibold text-card-foreground">{(params.growthRateBefore * 100).toFixed(1)}{"% 씩"}</span>
+                  {" 늘린 뒤 "}
+                  <span className="font-semibold text-card-foreground">{params.retirementYear}{"년부터"}</span>
+                  {" 안전하게 투자하면 "}
+                  <span style={{ color: result.isSafe ? "#4ade80" : "#f87171" }} className="font-bold">
+                    {result.isSafe ? `${result.trajectory[result.trajectory.length - 1]?.year ?? params.birthYear + 100}년(만 100+세 시점)` : `${result.depletionYear}년(만 ${result.depletionAge}세 시점)`}
+                  </span>
+                  {"에 자산이 고갈됩니다. 그땐 낙원에 있겠죠?"}
+                </p>
+              </div>
+
+              {/* Chart */}
+              <div className="flex-1 min-h-0 relative pl-10 pb-4">
+                <RetirementChart
+                  data={result.trajectory}
+                  retirementYear={params.retirementYear}
+                  depletionYear={result.depletionYear}
+                  height={220}
+                />
+              </div>
+
+              {/* Chart footnote */}
+              <div className="text-[10px] text-muted-foreground/60 text-center">
+                {currentYear}{"년 기준 | 인플레이션 연 "}{(params.inflationRate * 100).toFixed(1)}{"% 반영 | 자산이 고갈될 때까지 시뮬레이션"}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -1091,11 +1266,11 @@ export default function DashboardApp() {
 
         {/* ========== RETIREMENT ========== */}
         {activeTab === 5 && (
-          <div className="grid grid-cols-2 gap-4">
-            <div className="bg-card rounded-[14px] p-4 border border-border col-span-2">
-              <div className="text-[10px] text-muted-foreground mb-3.5 tracking-wider uppercase">생애 재무 / 은퇴 시뮬레이션</div>
+          <div className="flex flex-col gap-4">
+            <div className="bg-background rounded-[14px]">
               <RetirementPlanner totalPortfolioValue={totalMarketValue} />
             </div>
+            <div className="grid grid-cols-2 gap-4">
             <div className="bg-card rounded-[14px] p-4 border border-border">
               <div className="text-[10px] text-muted-foreground mb-3.5 tracking-wider uppercase">포트폴리오 수익률 TOP 5</div>
               {allPortfolioStats.length === 0 && <div className="text-muted-foreground/50 text-xs">포트폴리오를 먼저 생성해 주세요</div>}
@@ -1132,6 +1307,7 @@ export default function DashboardApp() {
                   </div>
                 ))}
               </div>
+            </div>
             </div>
           </div>
         )}

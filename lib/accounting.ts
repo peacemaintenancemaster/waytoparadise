@@ -66,46 +66,88 @@ export function weatherFromZScore(z: number, positiveIsGood = true): string {
 }
 
 export interface RetirementParams {
-  currentAssets: number;
-  annualContribution: number;
+  birthYear: number;
+  currentAssets: number;         // 만원
+  monthlySaving: number;         // 만원/월
+  savingIncreaseEveryN: number;  // N년마다
+  savingIncreaseAmount: number;  // 만원 증액
   retirementYear: number;
-  targetWithdrawal: number;
+  monthlyExpense: number;        // 은퇴 후 월 생활비 (만원, 현재가치)
+  growthRateBefore: number;      // 은퇴 전 연 수익률 (0.08 etc)
+  growthRateAfter: number;       // 은퇴 후 연 수익률 (0.04 etc)
+  inflationRate: number;         // 0.025 etc
   currentYear: number;
-  inflationRate: number;
 }
 
 export interface RetirementResult {
-  requiredCAGR: number;
-  targetFV: number;
-  trajectory: { year: number; value: number }[];
+  depletionYear: number | null;  // null = 100세 이상 안전
+  depletionAge: number | null;
+  peakAssets: number;            // 최고 자산
+  retirementAssets: number;      // 은퇴 시점 자산
+  avgAnnualSaving: number;       // 은퇴 전 평균 연간 저축
+  trajectory: { year: number; value: number; retired: boolean }[];
+  isSafe: boolean;
 }
 
 export function simulateRetirement(params: RetirementParams): RetirementResult | null {
-  const { currentAssets, annualContribution, retirementYear, targetWithdrawal, currentYear, inflationRate } = params;
-  const years = retirementYear - currentYear;
-  if (years <= 0) return null;
-  const targetFV = targetWithdrawal * 25 * Math.pow(1 + inflationRate, years);
-  let lo = -0.2,
-    hi = 0.6;
-  for (let i = 0; i < 200; i++) {
-    const mid = (lo + hi) / 2;
-    const r = mid === 0 ? 0 : (Math.pow(1 + mid, years) - 1) / mid;
-    if (currentAssets * Math.pow(1 + mid, years) + annualContribution * r < targetFV) {
-      lo = mid;
-    } else {
-      hi = mid;
+  const {
+    birthYear, currentAssets, monthlySaving, savingIncreaseEveryN, savingIncreaseAmount,
+    retirementYear, monthlyExpense, growthRateBefore, growthRateAfter,
+    inflationRate, currentYear,
+  } = params;
+
+  const accumulationYears = retirementYear - currentYear;
+  if (accumulationYears < 0) return null;
+
+  const MAX_SIM_YEAR = birthYear + 120;
+  const trajectory: { year: number; value: number; retired: boolean }[] = [];
+
+  let assets = currentAssets; // 만원
+  let depletionYear: number | null = null;
+
+  // --- 은퇴 전: 저축 단계 ---
+  for (let y = 0; y < accumulationYears; y++) {
+    const yearsElapsed = y;
+    // 저축 증액: N년마다 M만원 증액
+    const increments = savingIncreaseEveryN > 0 ? Math.floor(yearsElapsed / savingIncreaseEveryN) : 0;
+    const annualSaving = (monthlySaving + increments * savingIncreaseAmount) * 12;
+    assets = assets * (1 + growthRateBefore) + annualSaving;
+    trajectory.push({ year: currentYear + y + 1, value: Math.max(0, assets), retired: false });
+  }
+
+  const retirementAssets = assets;
+  const accumulationPeriod = trajectory.filter(t => !t.retired);
+  const avgAnnualSaving = accumulationPeriod.length > 0
+    ? accumulationPeriod.reduce((s, _, i) => {
+        const increments = savingIncreaseEveryN > 0 ? Math.floor(i / savingIncreaseEveryN) : 0;
+        return s + (monthlySaving + increments * savingIncreaseAmount) * 12;
+      }, 0) / accumulationPeriod.length
+    : monthlySaving * 12;
+
+  // --- 은퇴 후: 인출 단계 ---
+  for (let y = 0; y <= MAX_SIM_YEAR - retirementYear; y++) {
+    const yearsRetired = y;
+    // 물가 반영 인출액 (현재가치 기준 월 생활비)
+    const annualWithdrawal = monthlyExpense * 12 * Math.pow(1 + inflationRate, accumulationYears + yearsRetired);
+    assets = assets * (1 + growthRateAfter) - annualWithdrawal;
+    const year = retirementYear + y + 1;
+    if (assets <= 0) {
+      trajectory.push({ year, value: 0, retired: true });
+      if (!depletionYear) depletionYear = year;
+      break;
     }
+    trajectory.push({ year, value: assets, retired: true });
+    if (year > MAX_SIM_YEAR) break;
   }
-  const cagr = (lo + hi) / 2;
-  const trajectory: { year: number; value: number }[] = [];
-  for (let y = 0; y <= years; y++) {
-    const r = cagr === 0 ? 0 : (Math.pow(1 + cagr, y) - 1) / cagr;
-    trajectory.push({
-      year: currentYear + y,
-      value: currentAssets * Math.pow(1 + cagr, y) + annualContribution * r,
-    });
-  }
-  return { requiredCAGR: cagr, targetFV, trajectory };
+
+  const peakAssets = Math.max(...trajectory.map(t => t.value));
+  const isSafe = depletionYear === null;
+  const depletionAge = depletionYear ? depletionYear - birthYear : null;
+
+  return {
+    depletionYear, depletionAge, peakAssets, retirementAssets,
+    avgAnnualSaving, trajectory, isSafe,
+  };
 }
 
 export function displayName(h: { ticker?: string | null; name?: string }): string {

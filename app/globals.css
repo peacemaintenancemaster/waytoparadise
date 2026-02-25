@@ -110,3 +110,21 @@ input[type="checkbox"] { accent-color: #4ade80; }
 
 /* Font variant numeric for tabular numbers */
 .tabular-nums { font-variant-numeric: tabular-nums; }
+
+/* Range slider thumb */
+input[type="range"] { -webkit-appearance: none; appearance: none; outline: none; }
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 18px; height: 18px; border-radius: 50%;
+  background: #4ade80; border: 2px solid #0a0d14;
+  box-shadow: 0 0 0 2px #4ade8044;
+  cursor: pointer; transition: transform 0.15s, box-shadow 0.15s;
+}
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.2); box-shadow: 0 0 0 4px #4ade8033;
+}
+input[type="range"]::-moz-range-thumb {
+  width: 18px; height: 18px; border-radius: 50%;
+  background: #4ade80; border: 2px solid #0a0d14;
+  cursor: pointer;
+}

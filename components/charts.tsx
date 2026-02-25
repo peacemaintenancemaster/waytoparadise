@@ -1,5 +1,104 @@
 "use client";
 
+export function RetirementChart({
+  data,
+  retirementYear,
+  depletionYear,
+  height = 220,
+}: {
+  data: { year: number; value: number; retired: boolean }[];
+  retirementYear: number;
+  depletionYear: number | null;
+  height?: number;
+}) {
+  if (!data || data.length < 2) return null;
+
+  const vals = data.map((d) => d.value);
+  const years = data.map((d) => d.year);
+  const minY = years[0];
+  const maxY = years[years.length - 1];
+  const maxV = Math.max(...vals, 1);
+
+  const xPct = (year: number) => ((year - minY) / (maxY - minY)) * 100;
+  const yPct = (val: number) => 100 - (val / maxV) * 85 - 5;
+
+  const pts = data.map((d) => `${xPct(d.year)},${yPct(d.value)}`).join(" ");
+  const areaPath = `M${xPct(minY)},${yPct(0)} ${pts} L${xPct(maxY)},${yPct(0)} Z`;
+
+  // Y axis labels (억 단위)
+  const tickCount = 4;
+  const yTicks = Array.from({ length: tickCount + 1 }, (_, i) => (maxV / tickCount) * i);
+  // X axis labels: every 7 years roughly
+  const totalYears = maxY - minY;
+  const xStep = Math.max(7, Math.floor(totalYears / 7));
+  const xTicks: number[] = [];
+  for (let y = minY; y <= maxY; y += xStep) xTicks.push(y);
+
+  const retXPct = xPct(retirementYear);
+  const deplXPct = depletionYear ? xPct(depletionYear) : null;
+
+  return (
+    <div style={{ height }} className="relative w-full select-none">
+      <svg
+        viewBox="0 0 100 100"
+        preserveAspectRatio="none"
+        style={{ width: "100%", height: "100%", display: "block" }}
+      >
+        <defs>
+          <linearGradient id="retGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#f87171" stopOpacity="0.35" />
+            <stop offset="100%" stopColor="#f87171" stopOpacity="0.02" />
+          </linearGradient>
+        </defs>
+        {/* Area fill */}
+        <path d={areaPath} fill="url(#retGrad)" stroke="none" />
+        {/* Line */}
+        <polyline
+          points={pts}
+          fill="none"
+          stroke="#f87171"
+          strokeWidth="2"
+          vectorEffect="non-scaling-stroke"
+        />
+        {/* Retirement vertical line */}
+        <line
+          x1={`${retXPct}`} y1="0" x2={`${retXPct}`} y2="100"
+          stroke="#4ade80" strokeWidth="1" strokeDasharray="2,2"
+          vectorEffect="non-scaling-stroke"
+        />
+        {/* Depletion vertical line */}
+        {deplXPct !== null && (
+          <line
+            x1={`${deplXPct}`} y1="0" x2={`${deplXPct}`} y2="100"
+            stroke="#f87171" strokeWidth="1" strokeDasharray="2,2"
+            vectorEffect="non-scaling-stroke"
+          />
+        )}
+      </svg>
+      {/* Y-axis labels */}
+      <div className="absolute left-0 top-0 h-full flex flex-col justify-between pointer-events-none" style={{ width: 40 }}>
+        {[...yTicks].reverse().map((v, i) => (
+          <span key={i} className="text-[9px] text-muted-foreground tabular-nums leading-none">
+            {v >= 1e8 ? `${(v / 1e8).toFixed(0)}억` : v >= 1e4 ? `${(v / 1e4).toFixed(0)}만` : "0"}
+          </span>
+        ))}
+      </div>
+      {/* X-axis labels */}
+      <div className="absolute bottom-0 left-10 right-0 flex justify-between pointer-events-none">
+        {xTicks.map((y) => (
+          <span
+            key={y}
+            className="text-[9px] text-muted-foreground tabular-nums"
+            style={{ position: "absolute", left: `${((y - minY) / (maxY - minY)) * 100}%`, transform: "translateX(-50%)" }}
+          >
+            {y}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function HorizBarChart({ data }: { data: { label: string; value: number }[] }) {
   const max = Math.max(...data.map((d) => Math.abs(d.value)), 0.01);
   return (
